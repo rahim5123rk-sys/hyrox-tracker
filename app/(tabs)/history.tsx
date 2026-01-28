@@ -6,7 +6,7 @@ import { Alert, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View 
 export default function History() {
   const router = useRouter();
   const [history, setHistory] = useState<any[]>([]);
-  const [bestTime, setBestTime] = useState('--:--');
+  const [latestTime, setLatestTime] = useState('--:--');
 
   // useFocusEffect ensures that every time you click the "LOG" tab,
   // it refreshes the list with your latest race data.
@@ -23,11 +23,10 @@ export default function History() {
         const data = JSON.parse(json);
         setHistory(data);
         
-        // Calculate Personal Best (PB)
+        // FIX: Display LATEST session time instead of PB.
+        // Since logs are saved [new, old...], index 0 is always the latest.
         if (data.length > 0) {
-            // Sort by time string (e.g., "55:00" comes before "60:00")
-            const sorted = [...data].sort((a, b) => a.totalTime.localeCompare(b.totalTime));
-            setBestTime(sorted[0].totalTime);
+            setLatestTime(data[0].totalTime);
         }
       }
     } catch (e) {
@@ -47,7 +46,7 @@ export default function History() {
           onPress: async () => {
             await AsyncStorage.removeItem('raceHistory');
             setHistory([]);
-            setBestTime('--:--');
+            setLatestTime('--:--');
           }
         }
       ]
@@ -62,11 +61,11 @@ export default function History() {
       <View style={styles.header}>
         <View>
             <Text style={styles.title}>PERFORMANCE <Text style={{color: '#FFD700'}}>LOG</Text></Text>
-            <Text style={styles.subtitle}>{history.length} TOTAL RACES</Text>
+            <Text style={styles.subtitle}>{history.length} SESSIONS COMPLETED</Text>
         </View>
         <View style={styles.statBox}>
-            <Text style={styles.statLabel}>PB</Text>
-            <Text style={styles.statValue}>{bestTime}</Text>
+            <Text style={styles.statLabel}>LATEST</Text>
+            <Text style={styles.statValue}>{latestTime}</Text>
         </View>
       </View>
 
@@ -85,7 +84,6 @@ export default function History() {
                     key={index} 
                     style={styles.card}
                     activeOpacity={0.7}
-                    // NAVIGATE TO LOG DETAILS
                     onPress={() => {
                         router.push({
                             pathname: "/log_details",
@@ -100,7 +98,8 @@ export default function History() {
                     <View style={styles.cardHeader}>
                         <View>
                             <Text style={styles.dateText}>{race.date}</Text>
-                            <Text style={styles.raceName}>HYROX SIMULATION</Text>
+                            {/* Shows specific workout name (e.g. "THE PUNISHER") instead of generic title */}
+                            <Text style={styles.raceName}>{race.name || 'HYROX SIMULATION'}</Text>
                         </View>
                         <Text style={styles.timeText}>{race.totalTime}</Text>
                     </View>
@@ -119,7 +118,6 @@ export default function History() {
             </TouchableOpacity>
         )}
         
-        {/* Spacer for comfortable scrolling */}
         <View style={{ height: 100 }} />
       </ScrollView>
     </View>
@@ -168,7 +166,7 @@ const styles = StyleSheet.create({
     paddingBottom: 15 
   },
   dateText: { color: '#888', fontSize: 12, fontWeight: 'bold' },
-  raceName: { color: '#fff', fontSize: 14, fontWeight: 'bold', marginTop: 2 },
+  raceName: { color: '#fff', fontSize: 14, fontWeight: 'bold', marginTop: 2, textTransform: 'uppercase' },
   timeText: { color: '#fff', fontSize: 26, fontWeight: '900', fontStyle: 'italic' },
   
   footerRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12, alignItems: 'center' },

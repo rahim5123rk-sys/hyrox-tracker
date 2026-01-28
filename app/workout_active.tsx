@@ -1,53 +1,112 @@
+import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function WorkoutActive() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { title, steps, rounds } = useLocalSearchParams();
+  const params = useLocalSearchParams();
   
-  const parsedSteps = steps ? JSON.parse(steps as string) : [];
-  const totalRounds = rounds ? parseInt((rounds as string).match(/\d+/)![0]) : 1;
+  // --- INITIAL SETUP ---
+  const [sessionTitle, setSessionTitle] = useState("");
+  const initialSteps = params.steps ? JSON.parse(params.steps as string) : ["Work", "Rest"];
+  const totalRounds = params.rounds ? parseInt((params.rounds as string).match(/\d+/)![0]) : 1;
 
+  // --- STATE ---
+  const [activeSteps, setActiveSteps] = useState<string[]>(initialSteps);
   const [currentRound, setCurrentRound] = useState(1);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
-  const [seconds, setSeconds] = useState(0);
-  const [isActive, setIsActive] = useState(true);
   
+  // LOGGING STATE
   const [roundSplits, setRoundSplits] = useState<number[]>([]);
   const [lastRoundTime, setLastRoundTime] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
+  
+  // TIMERS
+  const [totalSeconds, setTotalSeconds] = useState(0);
+  const [stepSeconds, setStepSeconds] = useState(0); 
+  const [isActive, setIsActive] = useState(true);
+
+  const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 12 ? 'MORNING' : hour < 18 ? 'AFTERNOON' : 'EVENING';
+    setSessionTitle(`${timeOfDay} PROTOCOL`);
+
     let interval: any;
     if (isActive && !showSummary) {
-      interval = setInterval(() => setSeconds(s => s + 1), 1000);
+      interval = setInterval(() => {
+        setTotalSeconds(t => t + 1);
+        setStepSeconds(s => s + 1);
+      }, 1000);
     }
     return () => clearInterval(interval);
   }, [isActive, showSummary]);
 
   const handleNext = () => {
-    Vibration.vibrate(100); 
+    Vibration.vibrate(50); 
     
-    if (currentStepIdx < parsedSteps.length - 1) {
-      setCurrentStepIdx(currentStepIdx + 1);
+    if (currentStepIdx < activeSteps.length - 1) {
+      setCurrentStepIdx(prev => prev + 1);
+      setStepSeconds(0); 
+      scrollViewRef.current?.scrollTo({ y: (currentStepIdx + 1) * 80, animated: true });
     } else {
-      const currentSplit = seconds - lastRoundTime;
+      // --- ROUND COMPLETE ---
+      const currentSplit = totalSeconds - lastRoundTime;
       const updatedSplits = [...roundSplits, currentSplit];
       setRoundSplits(updatedSplits);
-      setLastRoundTime(seconds);
+      setLastRoundTime(totalSeconds);
 
       if (currentRound < totalRounds) {
-        setCurrentRound(currentRound + 1);
+        setCurrentRound(prev => prev + 1);
         setCurrentStepIdx(0);
+        setStepSeconds(0);
+        setActiveSteps(initialSteps); 
         Vibration.vibrate([0, 100, 50, 100]); 
+        scrollViewRef.current?.scrollTo({ y: 0, animated: true });
       } else {
-        setIsActive(false);
-        setShowSummary(true);
-        Vibration.vibrate([0, 500, 100, 500]);
+        finishWorkout(updatedSplits);
       }
+    }
+  };
+
+  const handleAddSet = () => {
+    const newSteps = [...activeSteps];
+    newSteps.splice(currentStepIdx + 1, 0, `${activeSteps[currentStepIdx]} (EXTRA)`);
+    setActiveSteps(newSteps);
+    Vibration.vibrate(20);
+    Alert.alert("EXTRA SET ADDED", "One additional set added to this round.");
+  };
+
+  const finishWorkout = async (finalSplits: number[]) => {
+    setIsActive(false);
+    setShowSummary(true); // Show local summary first
+    Vibration.vibrate(1000);
+
+    // Save in background
+    try {
+        const formattedSplits = finalSplits.map((time, index) => ({
+            name: `ROUND ${index + 1}`,
+            actual: time,
+            target: 0
+        }));
+
+        const newLog = {
+            date: new Date().toLocaleDateString(),
+            totalTime: formatTime(totalSeconds),
+            name: params.title || sessionTitle, 
+            splits: formattedSplits
+        };
+
+        const existingLogs = await AsyncStorage.getItem('raceHistory');
+        const history = existingLogs ? JSON.parse(existingLogs) : [];
+        await AsyncStorage.setItem('raceHistory', JSON.stringify([newLog, ...history]));
+    } catch (error) {
+        console.error("Failed to save workout:", error);
     }
   };
 
@@ -57,121 +116,159 @@ export default function WorkoutActive() {
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
-  // --- HYROX CONSISTENCY LOGIC ---
-  const getConsistencyRating = () => {
-    if (roundSplits.length < 2) return { label: "DATA PENDING", color: "#444", msg: "Complete more rounds for analysis." };
-    
-    const max = Math.max(...roundSplits);
-    const min = Math.min(...roundSplits);
-    const variance = ((max - min) / min) * 100;
-
-    if (variance < 5) return { label: "ELITE CONSISTENCY", color: "#FFD700", msg: "Perfect pacing. You are race-ready." };
-    if (variance < 12) return { label: "STRONG ENGINE", color: "#fff", msg: "Minor fading. Focus on the final 400m." };
-    return { label: "ENGINE FAILURE", color: "#FF3B30", msg: "Significant fade. Back off 5% on Round 1." };
-  };
-
-  const rating = getConsistencyRating();
-
+  // --- SUMMARY VIEW ---
   if (showSummary) {
     return (
       <View style={[styles.container, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.summaryTitle}>SESSION DEBRIEF</Text>
-        <Text style={styles.summaryTime}>{formatTime(seconds)}</Text>
-        <Text style={styles.summaryLabel}>TOTAL CONTINUOUS TIME</Text>
+        <Text style={styles.summaryHeader}>SESSION COMPLETE</Text>
+        <Text style={styles.totalTimeLarge}>{formatTime(totalSeconds)}</Text>
+        <Text style={styles.subLabel}>TOTAL WORK TIME</Text>
 
-        {/* AUTOMATIC RATING CARD */}
-        <View style={[styles.ratingCard, { borderColor: rating.color }]}>
-            <Text style={[styles.ratingLabel, { color: rating.color }]}>{rating.label}</Text>
-            <Text style={styles.ratingMsg}>"{rating.msg}"</Text>
+        {/* DATA GRID INSTEAD OF AI */}
+        <View style={styles.statsGrid}>
+            <View style={styles.statBox}>
+                <Text style={styles.statLabel}>ROUNDS</Text>
+                <Text style={styles.statValue}>{totalRounds}</Text>
+            </View>
+            <View style={styles.statBox}>
+                <Text style={styles.statLabel}>FASTEST</Text>
+                <Text style={styles.statValue}>{formatTime(Math.min(...roundSplits))}</Text>
+            </View>
+            <View style={styles.statBox}>
+                <Text style={styles.statLabel}>AVG LAP</Text>
+                <Text style={styles.statValue}>{formatTime(Math.round(totalSeconds / totalRounds))}</Text>
+            </View>
         </View>
 
-        <View style={styles.statsContainer}>
-          <ScrollView showsVerticalScrollIndicator={false}>
+        <ScrollView style={{flex: 1, width: '100%'}} contentContainerStyle={{paddingBottom: 40}}>
             {roundSplits.map((split, i) => (
               <View key={i} style={styles.splitRow}>
-                <Text style={styles.splitRound}>ROUND {i + 1}</Text>
-                <Text style={styles.splitTime}>{formatTime(split)}</Text>
+                <Text style={styles.splitIndex}>ROUND {i + 1}</Text>
+                <Text style={styles.splitValue}>{formatTime(split)}</Text>
               </View>
             ))}
-          </ScrollView>
-        </View>
+        </ScrollView>
 
-        <TouchableOpacity style={styles.exitBtn} onPress={() => router.back()}>
-          <Text style={styles.exitBtnText}>SAVE TO PERFORMANCE HUB</Text>
+        <TouchableOpacity style={styles.saveBtn} onPress={() => { router.dismissAll(); router.replace('/(tabs)/history'); }}>
+          <Text style={styles.saveBtnText}>SAVE & VIEW LOGS</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
+  // --- ACTIVE VIEW (Unchanged from previous logic) ---
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
-      <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.sessionTitle}>{title}</Text>
-        <Text style={styles.roundTracker}>ROUND {currentRound} <Text style={{color: '#444'}}>/</Text> {totalRounds}</Text>
-        <View style={styles.progressBar}><View style={[styles.progressFill, { width: `${(currentRound / totalRounds) * 100}%` }]} /></View>
+      
+      <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
+        <View>
+            <Text style={styles.sessionType}>{params.title || "TRAINING LAB"}</Text>
+            <Text style={styles.dynamicTitle}>{sessionTitle}</Text>
+        </View>
+        <View style={styles.totalTimerBox}>
+            <Text style={styles.totalTimerLabel}>TOTAL TIME</Text>
+            <Text style={styles.totalTimerValue}>{formatTime(totalSeconds)}</Text>
+        </View>
       </View>
 
-      <View style={styles.timerContainer}>
-          <Text style={styles.timerLabel}>ELAPSED PERFORMANCE</Text>
-          <Text style={styles.timerValue}>{formatTime(seconds)}</Text>
+      <View style={styles.roundInfo}>
+        <Text style={styles.roundText}>ROUND {currentRound} <Text style={{color:'#666'}}>/</Text> {totalRounds}</Text>
+        <View style={styles.progressBarBg}>
+            <View style={[styles.progressBarFill, { width: `${(currentRound / totalRounds) * 100}%` }]} />
+        </View>
       </View>
 
-      <View style={styles.taskCard}>
-          <Text style={styles.taskLabel}>CURRENT OBJECTIVE</Text>
-          <Text style={styles.taskName}>{parsedSteps[currentStepIdx]}</Text>
-          <View style={styles.nextUp}>
-              <Text style={styles.nextLabel}>UP NEXT: </Text>
-              <Text style={styles.nextTask}>{parsedSteps[currentStepIdx + 1] || "ROUND COMPLETE"}</Text>
-          </View>
-      </View>
+      <ScrollView 
+        ref={scrollViewRef}
+        style={styles.listContainer} 
+        contentContainerStyle={{ paddingBottom: 150 }}
+        showsVerticalScrollIndicator={false}
+      >
+        {activeSteps.map((step, index) => {
+          const isCompleted = index < currentStepIdx;
+          const isCurrent = index === currentStepIdx;
+          
+          return (
+            <TouchableOpacity 
+                key={index} 
+                activeOpacity={0.8}
+                style={[styles.stepCard, isCurrent && styles.stepCardActive, isCompleted && styles.stepCardDone]}
+                onPress={() => isCurrent && handleNext()} 
+            >
+                <View style={[styles.statusIcon, isCurrent && styles.statusIconActive, isCompleted && styles.statusIconDone]}>
+                    {isCompleted ? <Ionicons name="checkmark" size={16} color="#000" /> : <Text style={[styles.stepNum, isCurrent && {color: '#000'}]}>{index + 1}</Text>}
+                </View>
+                <View style={styles.stepContent}>
+                    <Text style={[styles.stepText, isCurrent && styles.stepTextActive, isCompleted && styles.stepTextDone]}>{step}</Text>
+                    {isCurrent && <Text style={styles.stepSubtext}>ACTIVE • {formatTime(stepSeconds)}</Text>}
+                </View>
+                {isCurrent && <Text style={styles.stepTimer}>{formatTime(stepSeconds)}</Text>}
+            </TouchableOpacity>
+          );
+        })}
+      </ScrollView>
 
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 40 }]}>
-        <TouchableOpacity style={styles.mainBtn} onPress={handleNext}><Text style={styles.mainBtnText}>COMPLETE & NEXT</Text></TouchableOpacity>
-        <TouchableOpacity onPress={() => router.back()} style={styles.abortBtn}><Text style={styles.exitText}>ABORT MISSION</Text></TouchableOpacity>
+      <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
+        <View style={styles.footerRow}>
+            <TouchableOpacity style={styles.addSetBtn} onPress={handleAddSet}>
+                <Ionicons name="add" size={24} color="#FFF" />
+                <Text style={styles.addSetText}>ADD SET</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.nextBtn} onPress={handleNext}>
+                <Text style={styles.nextBtnText}>{currentStepIdx === activeSteps.length - 1 ? "FINISH ROUND" : "CHECK OFF"}</Text>
+                <Ionicons name="arrow-forward" size={20} color="#000" />
+            </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', paddingHorizontal: 30 },
-  header: { alignItems: 'center', marginBottom: 30 },
-  sessionTitle: { color: '#FFD700', fontSize: 10, fontWeight: '900', letterSpacing: 3 },
-  roundTracker: { color: '#fff', fontSize: 28, fontWeight: '900', marginTop: 8 },
-  progressBar: { width: '100%', height: 4, backgroundColor: '#222', borderRadius: 2, marginTop: 20 },
-  progressFill: { height: '100%', backgroundColor: '#FFD700', borderRadius: 2 },
-  
-  timerContainer: { alignItems: 'center', marginBottom: 30 },
-  timerLabel: { color: '#444', fontSize: 10, fontWeight: '900', letterSpacing: 1, marginBottom: 5 },
-  timerValue: { color: '#fff', fontSize: 80, fontWeight: '900', fontStyle: 'italic', letterSpacing: -2 },
-  
-  taskCard: { backgroundColor: '#111', padding: 40, borderRadius: 40, alignItems: 'center', borderWidth: 1, borderColor: '#222' },
-  taskLabel: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginBottom: 15 },
-  taskName: { color: '#fff', fontSize: 30, fontWeight: '900', textAlign: 'center', textTransform: 'uppercase' },
-  nextUp: { marginTop: 35, flexDirection: 'row', backgroundColor: '#1A1A1A', paddingHorizontal: 15, paddingVertical: 8, borderRadius: 12 },
-  nextLabel: { color: '#555', fontSize: 11, fontWeight: 'bold' },
-  nextTask: { color: '#aaa', fontSize: 11, fontWeight: 'bold' },
+  container: { flex: 1, backgroundColor: '#000', paddingHorizontal: 20 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  sessionType: { color: '#FFD700', fontSize: 10, fontWeight: '900', letterSpacing: 1, marginBottom: 4 },
+  dynamicTitle: { color: '#fff', fontSize: 22, fontWeight: '900', fontStyle: 'italic' },
+  totalTimerBox: { alignItems: 'flex-end' },
+  totalTimerLabel: { color: '#666', fontSize: 9, fontWeight: 'bold' },
+  totalTimerValue: { color: '#fff', fontSize: 24, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  roundInfo: { marginBottom: 20 },
+  roundText: { color: '#ccc', fontSize: 12, fontWeight: 'bold', marginBottom: 8 },
+  progressBarBg: { height: 4, backgroundColor: '#222', borderRadius: 2 },
+  progressBarFill: { height: '100%', backgroundColor: '#FFD700', borderRadius: 2 },
+  listContainer: { flex: 1 },
+  stepCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: '#222' },
+  stepCardActive: { backgroundColor: '#1A1A1A', borderColor: '#FFD700', transform: [{scale: 1.02}] },
+  stepCardDone: { opacity: 0.4 },
+  statusIcon: { width: 30, height: 30, borderRadius: 15, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
+  statusIconActive: { backgroundColor: '#FFD700' },
+  statusIconDone: { backgroundColor: '#FFD700' },
+  stepNum: { color: '#666', fontSize: 12, fontWeight: 'bold' },
+  stepContent: { flex: 1 },
+  stepText: { color: '#ccc', fontSize: 16, fontWeight: 'bold' },
+  stepTextActive: { color: '#fff', fontSize: 18 },
+  stepTextDone: { textDecorationLine: 'line-through' },
+  stepSubtext: { color: '#FFD700', fontSize: 10, fontWeight: 'bold', marginTop: 4 },
+  stepTimer: { color: '#fff', fontSize: 18, fontWeight: '900', fontVariant: ['tabular-nums'] },
+  footer: { position: 'absolute', bottom: 0, left: 20, right: 20 },
+  footerRow: { flexDirection: 'row', gap: 15 },
+  addSetBtn: { flex: 0.3, backgroundColor: '#222', borderRadius: 16, justifyContent: 'center', alignItems: 'center', paddingVertical: 15 },
+  addSetText: { color: '#fff', fontSize: 9, fontWeight: 'bold', marginTop: 2 },
+  nextBtn: { flex: 0.7, backgroundColor: '#FFD700', borderRadius: 16, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, paddingVertical: 15 },
+  nextBtnText: { color: '#000', fontSize: 16, fontWeight: '900' },
 
-  footer: { position: 'absolute', bottom: 0, left: 30, right: 30, alignItems: 'center' },
-  mainBtn: { backgroundColor: '#FFD700', width: '100%', padding: 25, borderRadius: 25, alignItems: 'center', marginBottom: 20 },
-  mainBtnText: { color: '#000', fontSize: 20, fontWeight: '900' },
-  abortBtn: { padding: 10 },
-  exitText: { color: '#444', fontSize: 11, fontWeight: '900' },
-
-  summaryTitle: { color: '#FFD700', fontSize: 12, fontWeight: '900', textAlign: 'center', letterSpacing: 2 },
-  summaryTime: { color: '#fff', fontSize: 50, fontWeight: '900', textAlign: 'center', marginTop: 10 },
-  summaryLabel: { color: '#444', fontSize: 10, fontWeight: '900', textAlign: 'center', marginBottom: 20 },
-
-  ratingCard: { backgroundColor: '#111', padding: 25, borderRadius: 25, borderWidth: 1, marginBottom: 25, alignItems: 'center' },
-  ratingLabel: { fontSize: 14, fontWeight: '900', marginBottom: 8, letterSpacing: 1 },
-  ratingMsg: { color: '#888', fontSize: 12, textAlign: 'center', fontStyle: 'italic', lineHeight: 18 },
-
-  statsContainer: { height: 180, backgroundColor: '#111', borderRadius: 25, padding: 20, marginBottom: 20 },
-  splitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#222' },
-  splitRound: { color: '#888', fontWeight: 'bold', fontSize: 12 },
-  splitTime: { color: '#fff', fontWeight: '900', fontSize: 14 },
-
-  exitBtn: { backgroundColor: '#fff', width: '100%', padding: 20, borderRadius: 20, alignItems: 'center', marginBottom: 40 },
-  exitBtnText: { color: '#000', fontWeight: '900', fontSize: 16 }
+  // Summary Styles
+  summaryHeader: { color: '#fff', fontSize: 18, fontWeight: '900', textAlign: 'center', marginBottom: 10, letterSpacing: 1 },
+  totalTimeLarge: { color: '#fff', fontSize: 60, fontWeight: 'bold', textAlign: 'center', fontFamily: 'Courier' },
+  subLabel: { color: '#444', fontSize: 10, fontWeight: '900', textAlign: 'center', marginBottom: 30 },
+  statsGrid: { flexDirection: 'row', gap: 10, marginBottom: 30 },
+  statBox: { flex: 1, backgroundColor: '#111', padding: 15, borderRadius: 12, alignItems: 'center' },
+  statLabel: { color: '#666', fontSize: 9, fontWeight: '900', marginBottom: 5 },
+  statValue: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  splitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#222' },
+  splitIndex: { color: '#888', fontWeight: 'bold' },
+  splitValue: { color: '#fff', fontWeight: 'bold', fontFamily: 'Courier' },
+  saveBtn: { backgroundColor: '#333', height: 60, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
+  saveBtnText: { color: '#fff', fontWeight: '900', fontSize: 16 },
 });

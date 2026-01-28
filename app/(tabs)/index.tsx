@@ -1,20 +1,17 @@
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as Notifications from 'expo-notifications';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useEffect, useState } from 'react';
-import { Alert, Dimensions, ImageBackground, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ImageBackground, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const { width } = Dimensions.get('window');
-
-// --- DATA: 2026 UK & GLOBAL TOUR ---
+// --- DATA ---
 const UPCOMING_EVENTS = [
-  { id: 1, city: 'GLASGOW', date: 'MAR 11-15', venue: 'SEC Centre', type: 'UK MAJOR' },
-  { id: 2, city: 'LONDON', date: 'MAR 21-22', venue: 'Olympia (Regional)', type: 'CHAMPIONSHIP' },
-  { id: 3, city: 'LONDON', date: 'MAR 24-29', venue: 'Olympia London', type: 'UK MAJOR' },
-  { id: 4, city: 'CARDIFF', date: 'APR 29', venue: 'International Arena', type: 'UK TOUR' },
-  { id: 5, city: 'STOCKHOLM', date: 'JUN 18-21', venue: 'Strawberry Arena', type: 'WORLD CHAMPS' },
+  { id: 1, city: 'LONDON', date: 'MAY 04', type: 'MAJOR', days: 42 },
+  { id: 2, city: 'GLASGOW', date: 'MAR 12', type: 'REGIONAL', days: 14 },
+  { id: 3, city: 'STOCKHOLM', date: 'JUN 21', type: 'CHAMPS', days: 85 },
+  { id: 4, city: 'NEW YORK', date: 'NOV 11', type: 'MAJOR', days: 210 },
 ];
 
 const STRATEGY_VIDEOS: any = {
@@ -26,45 +23,45 @@ const STRATEGY_VIDEOS: any = {
 export default function Home() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  
   const [targetTime, setTargetTime] = useState('80');
   const [athleteType, setAthleteType] = useState('BALANCED');
-  const [lastRaceTime, setLastRaceTime] = useState<number | null>(null);
+  const [selectedEventIndex, setSelectedEventIndex] = useState(0);
   const [isNotifyEnabled, setIsNotifyEnabled] = useState(false);
+  const [weeklyPlan, setWeeklyPlan] = useState<any[]>([]);
 
-  // --- LOGIC: PACING CALCULATIONS ---
-  const currentTargetSec = (parseInt(targetTime) || 80) * 60;
-  let runRatio = athleteType === 'RUNNER' ? 0.40 : athleteType === 'LIFTER' ? 0.50 : 0.45;
-  const stationSplit = Math.floor((currentTargetSec * (1 - runRatio)) / 8);
-  const runSplit = Math.floor((currentTargetSec * runRatio) / 8);
+  const currentEvent = UPCOMING_EVENTS[selectedEventIndex];
 
-  const formatMinSec = (s: number) => {
-    const mins = Math.floor(s / 60);
-    const secs = s % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+  // Reload planner logic
+  useFocusEffect(
+    useCallback(() => {
+      loadPlan();
+    }, [])
+  );
 
-  // --- NOTIFICATIONS: TACTICAL ALERTS ---
-  const scheduleDailyReminder = async () => {
-    const { status } = await Notifications.requestPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert("SYSTEM ERROR", "Enable notifications to activate alerts.");
-      return;
-    }
-    if (!isNotifyEnabled) {
-      await Notifications.scheduleNotificationAsync({
-        content: { title: "ENGINE CHECK: 0700H", body: "Consistency is the only strategy.", sound: true },
-        trigger: { type: Notifications.SchedulableTriggerInputTypes.CALENDAR, hour: 7, minute: 0, repeats: true } as any,
-      });
-      setIsNotifyEnabled(true);
-      Alert.alert("ALERT SET", "07:00 Tactical Check-in active.");
+  const loadPlan = async () => {
+    const saved = await AsyncStorage.getItem('user_weekly_plan');
+    if (saved) {
+        setWeeklyPlan(JSON.parse(saved));
     } else {
-      await Notifications.cancelAllScheduledNotificationsAsync();
-      setIsNotifyEnabled(false);
-      Alert.alert("OFFLINE", "Notifications deactivated.");
+        const defaultPlan = [
+            { day: 'MON', focus: 'LOWER BODY', type: 'Strength', complete: false },
+            { day: 'TUE', focus: 'ZONE 2', type: 'Run', complete: false },
+            { day: 'WED', focus: 'UPPER BODY', type: 'Strength', complete: false },
+            { day: 'THU', focus: 'INTERVALS', type: 'Run', complete: false },
+            { day: 'FRI', focus: 'FULL BODY', type: 'Hybrid', complete: false },
+            { day: 'SAT', focus: 'SIMULATION', type: 'Hyrox', complete: false },
+            { day: 'SUN', focus: 'REST', type: 'Recovery', complete: false },
+        ];
+        setWeeklyPlan(defaultPlan);
+        AsyncStorage.setItem('user_weekly_plan', JSON.stringify(defaultPlan));
     }
   };
 
-  // --- VIDEO PLAYER SETUP ---
+  const completedCount = weeklyPlan.filter(d => d.complete).length;
+  const progress = weeklyPlan.length > 0 ? completedCount / weeklyPlan.length : 0;
+
+  // Video Player
   const player = useVideoPlayer(STRATEGY_VIDEOS.BALANCED, (p) => {
     p.loop = true;
     p.muted = true;
@@ -73,41 +70,25 @@ export default function Home() {
 
   useEffect(() => {
     async function updateVideo() {
-        try { 
-          await player.replaceAsync(STRATEGY_VIDEOS[athleteType]); 
-          player.play(); 
-        } catch (e) { console.log("Video error", e); }
+        try { await player.replaceAsync(STRATEGY_VIDEOS[athleteType]); player.play(); } catch (e) {}
     }
     updateVideo();
   }, [athleteType]);
 
-  // --- PERSISTENCE: LOAD HISTORY ---
-  useEffect(() => {
-    const loadData = async () => {
-      const saved = await AsyncStorage.getItem('race_history');
-      if (saved) {
-        const history = JSON.parse(saved);
-        if (history.length > 0) {
-          const last = history[history.length - 1];
-          const [m, s] = last.totalTime.split(':').map(Number);
-          setLastRaceTime(m * 60 + s);
-        }
-      }
-    };
-    loadData();
-  }, []);
+  const cycleEvent = () => {
+    const nextIndex = (selectedEventIndex + 1) % UPCOMING_EVENTS.length;
+    setSelectedEventIndex(nextIndex);
+  };
 
-  // --- GHOST PACER MATH ---
-  const ghost = lastRaceTime ? {
-    diff: Math.abs(lastRaceTime - currentTargetSec),
-    isAhead: (lastRaceTime - currentTargetSec) > 0,
-    percent: Math.min(Math.max(((lastRaceTime - currentTargetSec) / lastRaceTime) * 100 + 50, 10), 90)
-  } : null;
+  const scheduleDailyReminder = async () => {
+    setIsNotifyEnabled(!isNotifyEnabled);
+  };
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
       
+      {/* HERO BACKGROUND */}
       <ImageBackground 
         source={{ uri: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=1000' }} 
         style={[styles.hero, { paddingTop: insets.top + 20 }]}
@@ -125,127 +106,121 @@ export default function Home() {
 
       <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 120 }} showsVerticalScrollIndicator={false}>
         
-        {/* SECTION 1: WORLD BENCHMARKS */}
-        <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>WORLD BENCHMARKS</Text>
-            <Text style={styles.benchValue}>PRO MEN: 54:07</Text>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statsScroll}>
-            <View style={styles.statCard}>
-                <Text style={styles.statLabel}>AVG TIME</Text>
-                <Text style={styles.statValue}>88<Text style={styles.statUnit}>m</Text></Text>
+        {/* === WIDGET 1: WEEKLY PLAN === */}
+        <TouchableOpacity 
+            style={styles.plannerWidget} 
+            activeOpacity={0.9}
+            onPress={() => router.push('/planner')}
+        >
+            <View style={styles.plannerHeader}>
+                <Text style={styles.plannerTitle}>WEEKLY BATTLE PLAN</Text>
+                <Text style={styles.plannerLink}>MANAGE →</Text>
             </View>
-            <View style={[styles.statCard, {borderColor: '#FFD700'}]}>
-                <Text style={styles.statLabel}>RUN %</Text>
-                <Text style={styles.statValue}>52<Text style={styles.statUnit}>%</Text></Text>
+            <View style={styles.progressBarBg}>
+                <View style={[styles.progressBarFill, { width: `${progress * 100}%` }]} />
             </View>
-            <View style={styles.statCard}>
-                <Text style={styles.statLabel}>ZONES</Text>
-                <Text style={styles.statValue}>8</Text>
+            <View style={styles.daysGrid}>
+                {weeklyPlan.map((day, i) => (
+                    <View key={i} style={styles.dayCol}>
+                        <View style={[styles.dayDot, day.complete && styles.dayDotComplete]} />
+                        <Text style={[styles.dayLabel, day.complete && {color: '#fff'}]}>{day.day.charAt(0)}</Text>
+                    </View>
+                ))}
             </View>
-        </ScrollView>
+        </TouchableOpacity>
 
-        {/* SECTION 2: UPCOMING DEPLOYMENTS (EVENT CALENDAR) */}
+        {/* === WIDGET 2: UNIFIED MISSION CONTROL === */}
         <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>UPCOMING DEPLOYMENTS</Text>
-            <Text style={styles.benchValue}>UK & EUROPE</Text>
+            <Text style={styles.sectionTitle}>MISSION CONTROL</Text>
+            <Text style={styles.benchValue}>DEPLOYMENT CONFIG</Text>
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statsScroll}>
-            {UPCOMING_EVENTS.map((event) => (
-                <View key={event.id} style={styles.eventCard}>
-                    <Text style={styles.eventTag}>{event.type}</Text>
-                    <Text style={styles.eventCity}>{event.city}</Text>
-                    <Text style={styles.eventDate}>{event.date}</Text>
-                    <Text style={styles.eventVenue}>{event.venue}</Text>
+
+        <View style={styles.missionControlCard}>
+            
+            {/* TOP PANEL: RACE SELECTOR */}
+            <TouchableOpacity style={styles.mcTopPanel} onPress={cycleEvent} activeOpacity={0.8}>
+                <View>
+                    <View style={{flexDirection: 'row', alignItems: 'center', gap: 6}}>
+                        <Text style={styles.mcLabel}>TARGET EVENT</Text>
+                        <View style={styles.tagBadge}>
+                            <Text style={styles.tagText}>{currentEvent.type}</Text>
+                        </View>
+                    </View>
+                    <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 4}}>
+                        <Text style={styles.mcEventName}>HYROX {currentEvent.city}</Text>
+                        <Ionicons name="chevron-down" size={16} color="#666" style={{marginLeft: 8}} />
+                    </View>
+                    <Text style={styles.mcEventDate}>{currentEvent.date}</Text>
                 </View>
-            ))}
-        </ScrollView>
+                
+                <View style={styles.countdownBox}>
+                    <Text style={styles.cdNumber}>{currentEvent.days}</Text>
+                    <Text style={styles.cdLabel}>DAYS</Text>
+                </View>
+            </TouchableOpacity>
 
-        {/* SECTION 3: TRAINING LAB PORTAL */}
+            {/* DIVIDER LINE */}
+            <View style={styles.mcDivider} />
+
+            {/* MIDDLE PANEL: STRATEGY INPUTS */}
+            <View style={styles.mcMiddlePanel}>
+                {/* Target Time */}
+                <View style={styles.strategyCol}>
+                    <Text style={styles.mcLabel}>GOAL TIME</Text>
+                    <View style={{flexDirection: 'row', alignItems: 'baseline'}}>
+                        <TextInput 
+                            style={styles.strategyInput}
+                            value={targetTime}
+                            onChangeText={setTargetTime}
+                            keyboardType="numeric"
+                            maxLength={3}
+                        />
+                        <Text style={styles.strategyUnit}>MIN</Text>
+                    </View>
+                </View>
+
+                {/* Vertical Line */}
+                <View style={styles.verticalDivider} />
+
+                {/* Athlete Bias */}
+                <TouchableOpacity 
+                    style={styles.strategyCol} 
+                    onPress={() => {
+                        const types = ['RUNNER', 'BALANCED', 'LIFTER'];
+                        const next = types[(types.indexOf(athleteType) + 1) % types.length];
+                        setAthleteType(next);
+                    }}
+                >
+                    <Text style={styles.mcLabel}>STRATEGY BIAS</Text>
+                    <Text style={styles.strategyValue}>{athleteType}</Text>
+                    <Text style={styles.strategySub}>Tap to change</Text>
+                </TouchableOpacity>
+            </View>
+
+            {/* BOTTOM PANEL: DEPLOY BUTTON (Attached) */}
+            <TouchableOpacity 
+                activeOpacity={0.9} 
+                style={styles.mcBottomPanel} 
+                onPress={() => router.push({ pathname: '/race', params: { goalMinutes: targetTime, bias: athleteType }})}
+            >
+                <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} />
+                <View style={styles.videoOverlay} />
+                <View style={styles.btnContent}>
+                    <Text style={styles.actionText}>INITIATE TRACKER</Text>
+                    <Text style={styles.actionSubtext}>START RACE SIMULATION</Text>
+                </View>
+                <Ionicons name="arrow-forward-circle" size={32} color="#FFD700" style={{position: 'absolute', right: 20}} />
+            </TouchableOpacity>
+
+        </View>
+
+        {/* === SECTION 3: LAB PORTAL === */}
         <TouchableOpacity style={styles.labPortal} onPress={() => router.push('/templates')}>
             <View>
                 <Text style={styles.labTitle}>TRAINING LABORATORY</Text>
                 <Text style={styles.labSub}>Access compromised session templates</Text>
             </View>
             <Text style={styles.labArrow}>→</Text>
-        </TouchableOpacity>
-
-        {/* SECTION 4: TARGET INPUT */}
-        <View style={styles.glassCard}>
-            <Text style={styles.inputLabel}>TARGET FINISH TIME</Text>
-            <View style={styles.inputWrapper}>
-                <TextInput 
-                    style={styles.mainInput} 
-                    value={targetTime} 
-                    onChangeText={setTargetTime} 
-                    keyboardType="numeric" 
-                    maxLength={3} 
-                />
-                <Text style={styles.inputUnit}>MINS</Text>
-            </View>
-            <View style={styles.typeGrid}>
-                {['RUNNER', 'BALANCED', 'LIFTER'].map((type) => (
-                    <TouchableOpacity 
-                        key={type} 
-                        style={[styles.typeBtn, athleteType === type && styles.activeTypeBtn]} 
-                        onPress={() => setAthleteType(type)}
-                    >
-                        <Text style={[styles.typeBtnText, athleteType === type && { color: '#000' }]}>{type}</Text>
-                    </TouchableOpacity>
-                ))}
-            </View>
-        </View>
-
-        {/* SECTION 5: LIVE PACE CALCULATOR */}
-        <View style={styles.tableCard}>
-            <Text style={styles.tableTitle}>LIVE PACE CALCULATOR</Text>
-            <View style={styles.tableRow}>
-                <Text style={styles.rowName}>Run Pace (1km)</Text>
-                <Text style={styles.rowTime}>{formatMinSec(runSplit)}/km</Text>
-            </View>
-            <View style={styles.tableRow}>
-                <Text style={styles.rowName}>Avg Station Time</Text>
-                <Text style={styles.rowTime}>{formatMinSec(stationSplit)}/ea</Text>
-            </View>
-            <View style={styles.tableRow}>
-                <Text style={styles.rowName}>Ghost Pacer Gap</Text>
-                <Text style={[styles.rowTime, ghost && {color: ghost.isAhead ? '#FFD700' : '#FF3B30'}]}>
-                    {ghost ? `${ghost.isAhead ? '-' : '+'}${formatMinSec(ghost.diff)}` : '--:--'}
-                </Text>
-            </View>
-        </View>
-
-        {/* SECTION 6: GHOST TRACKER VISUAL */}
-        {ghost && (
-            <View style={styles.ghostVisual}>
-                <View style={styles.ghostTrack}>
-                    <View style={[styles.ghostIcon, { left: `${ghost.percent}%` }]}>
-                        <Text style={{fontSize: 16}}>👻</Text>
-                    </View>
-                    <View style={[styles.userIcon, { left: '50%' }]}>
-                        <View style={styles.userDot} />
-                    </View>
-                </View>
-            </View>
-        )}
-
-        {/* SECTION 7: START BUTTON */}
-        <TouchableOpacity 
-            activeOpacity={0.9} 
-            style={styles.actionButton} 
-            onPress={() => router.push({ pathname: '/race', params: { goalMinutes: targetTime, bias: athleteType }})}
-        >
-            <VideoView 
-                player={player} 
-                style={StyleSheet.absoluteFill} 
-                contentFit="cover" 
-                nativeControls={false} 
-            />
-            <View style={styles.videoOverlay} />
-            <View style={styles.btnContent}>
-                <Text style={styles.actionText}>DEPLOY RACE TRACKER</Text>
-                <Text style={styles.actionSubtext}>READY FOR DEPLOYMENT</Text>
-            </View>
         </TouchableOpacity>
 
       </ScrollView>
@@ -267,49 +242,81 @@ const styles = StyleSheet.create({
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 25, marginTop: 30, marginBottom: 15 },
   sectionTitle: { color: '#fff', fontSize: 11, fontWeight: '900', letterSpacing: 1 },
   benchValue: { color: '#444', fontSize: 10, fontWeight: 'bold' },
+
+  // WEEKLY PLANNER
+  plannerWidget: { marginHorizontal: 20, marginTop: 30, backgroundColor: '#1E1E1E', padding: 20, borderRadius: 25, borderWidth: 1, borderColor: '#333' },
+  plannerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  plannerTitle: { color: '#FFD700', fontSize: 12, fontWeight: '900', letterSpacing: 1 },
+  plannerLink: { color: '#666', fontSize: 10, fontWeight: 'bold' },
+  progressBarBg: { height: 6, backgroundColor: '#333', borderRadius: 3, marginBottom: 15 },
+  progressBarFill: { height: '100%', backgroundColor: '#FFD700', borderRadius: 3 },
+  daysGrid: { flexDirection: 'row', justifyContent: 'space-between' },
+  dayCol: { alignItems: 'center', gap: 6 },
+  dayDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#333' },
+  dayDotComplete: { backgroundColor: '#FFD700', shadowColor: '#FFD700', shadowOpacity: 0.5, shadowRadius: 5 },
+  dayLabel: { color: '#444', fontSize: 10, fontWeight: 'bold' },
+
+  // === UNIFIED MISSION CONTROL CARD ===
+  missionControlCard: {
+    marginHorizontal: 20,
+    backgroundColor: '#1E1E1E',
+    borderRadius: 30,
+    borderWidth: 1,
+    borderColor: '#333',
+    overflow: 'hidden', // Keeps the video button inside the border radius
+  },
   
-  statsScroll: { paddingLeft: 20, marginBottom: 20 },
-  statCard: { width: 115, height: 85, backgroundColor: '#1E1E1E', borderRadius: 18, padding: 15, marginRight: 12, borderWidth: 1, borderColor: '#252525' },
-  statLabel: { color: '#444', fontSize: 9, fontWeight: 'bold', marginBottom: 5 },
-  statValue: { color: '#fff', fontSize: 24, fontWeight: '900' },
-  statUnit: { fontSize: 12, color: '#FFD700' },
+  // TOP: Event Selector
+  mcTopPanel: {
+    padding: 20,
+    paddingBottom: 15,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  mcLabel: { color: '#666', fontSize: 9, fontWeight: '900', letterSpacing: 1, marginBottom: 4 },
+  tagBadge: { backgroundColor: '#333', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+  tagText: { color: '#FFD700', fontSize: 8, fontWeight: 'bold' },
+  mcEventName: { color: '#fff', fontSize: 20, fontWeight: '900', fontStyle: 'italic' },
+  mcEventDate: { color: '#888', fontSize: 12, fontWeight: 'bold' },
+  
+  countdownBox: { alignItems: 'center', backgroundColor: '#121212', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: '#252525' },
+  cdNumber: { color: '#fff', fontSize: 22, fontWeight: '900' },
+  cdLabel: { color: '#FFD700', fontSize: 8, fontWeight: '900' },
 
-  eventCard: { width: 160, height: 110, backgroundColor: '#1E1E1E', borderRadius: 18, padding: 15, marginRight: 12, borderWidth: 1, borderColor: '#333' },
-  eventTag: { color: '#FFD700', fontSize: 8, fontWeight: '900', marginBottom: 5 },
-  eventCity: { color: '#fff', fontSize: 16, fontWeight: '900' },
-  eventDate: { color: '#888', fontSize: 12, fontWeight: 'bold', marginVertical: 4 },
-  eventVenue: { color: '#444', fontSize: 9, fontWeight: 'bold' },
+  mcDivider: { height: 1, backgroundColor: '#252525', marginHorizontal: 20 },
 
-  labPortal: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFD700', marginHorizontal: 20, marginBottom: 25, padding: 22, borderRadius: 25 },
+  // MIDDLE: Inputs
+  mcMiddlePanel: {
+    flexDirection: 'row',
+    padding: 20,
+    paddingTop: 15,
+  },
+  strategyCol: { flex: 1, justifyContent: 'center' },
+  verticalDivider: { width: 1, backgroundColor: '#252525', marginHorizontal: 20 },
+  
+  strategyInput: { color: '#fff', fontSize: 32, fontWeight: '900', letterSpacing: -1, minWidth: 60 },
+  strategyUnit: { color: '#FFD700', fontSize: 12, fontWeight: 'bold', marginLeft: 4 },
+  strategyValue: { color: '#fff', fontSize: 16, fontWeight: '900' },
+  strategySub: { color: '#444', fontSize: 10, fontWeight: 'bold' },
+
+  // BOTTOM: Action Button
+  mcBottomPanel: {
+    height: 80,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  videoOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
+  btnContent: { alignItems: 'center' },
+  actionText: { color: '#fff', fontSize: 18, fontWeight: '900', fontStyle: 'italic' },
+  actionSubtext: { color: '#FFD700', fontSize: 9, fontWeight: 'bold', letterSpacing: 1 },
+
+  // OTHER
+  labPortal: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFD700', marginHorizontal: 20, marginTop: 25, marginBottom: 25, padding: 22, borderRadius: 25 },
   labTitle: { color: '#000', fontSize: 15, fontWeight: '900' },
   labSub: { color: '#000', fontSize: 11, opacity: 0.7 },
   labArrow: { color: '#000', fontSize: 20, fontWeight: '900' },
-
-  glassCard: { backgroundColor: '#1E1E1E', marginHorizontal: 20, padding: 25, borderRadius: 30, marginBottom: 20, borderWidth: 1, borderColor: '#252525' },
-  inputLabel: { color: '#444', fontSize: 10, fontWeight: '900', marginBottom: 5 },
-  inputWrapper: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 25 },
-  mainInput: { color: '#fff', fontSize: 75, fontWeight: '900', letterSpacing: -3 },
-  inputUnit: { color: '#FFD700', fontSize: 18, fontWeight: 'bold', marginLeft: 10 },
-  typeGrid: { flexDirection: 'row', gap: 10 },
-  typeBtn: { flex: 1, paddingVertical: 15, borderRadius: 15, backgroundColor: '#121212', alignItems: 'center', borderWidth: 1, borderColor: '#333' },
-  activeTypeBtn: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
-  typeBtnText: { color: '#666', fontSize: 10, fontWeight: '900' },
-
-  tableCard: { backgroundColor: '#1E1E1E', marginHorizontal: 20, padding: 20, borderRadius: 25, marginBottom: 20 },
-  tableTitle: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginBottom: 15 },
-  tableRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#252525' },
-  rowName: { color: '#888', fontSize: 13 },
-  rowTime: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
-
-  ghostVisual: { marginHorizontal: 30, marginBottom: 30 },
-  ghostTrack: { height: 2, backgroundColor: '#222', width: '100%', justifyContent: 'center' },
-  ghostIcon: { position: 'absolute', top: -12 },
-  userIcon: { position: 'absolute', top: -10 },
-  userDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#FFD700', borderWidth: 4, borderColor: '#000' },
-
-  actionButton: { height: 140, marginHorizontal: 20, borderRadius: 35, overflow: 'hidden', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#FFD700' },
-  videoOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
-  btnContent: { alignItems: 'center' },
-  actionText: { color: '#fff', fontSize: 24, fontWeight: '900', fontStyle: 'italic' },
-  actionSubtext: { color: '#FFD700', fontSize: 10, fontWeight: 'bold', marginTop: 5 },
 });
