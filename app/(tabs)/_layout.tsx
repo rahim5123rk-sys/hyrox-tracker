@@ -1,33 +1,53 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import React from 'react';
-
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
-        tabBarButton: HapticTab,
-      }}>
+        tabBarStyle: {
+          backgroundColor: '#000',
+          borderTopWidth: 0,
+          height: 95,
+          paddingBottom: 35,
+          paddingTop: 10,
+        },
+        tabBarActiveTintColor: '#FFD700',
+        tabBarInactiveTintColor: '#444',
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: '900',
+          letterSpacing: 1,
+        }
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          title: 'ENGINE',
+          tabBarIcon: ({ color }) => <Ionicons name="speedometer" size={24} color={color} />,
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="discover"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: 'DISCOVER',
+          tabBarIcon: ({ color }) => <Ionicons name="compass" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="guide"
+        options={{
+          title: 'GUIDE',
+          tabBarIcon: ({ color }) => <Ionicons name="book" size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="history"
+        options={{
+          title: 'HISTORY',
+          tabBarIcon: ({ color }) => <Ionicons name="bar-chart" size={24} color={color} />,
         }}
       />
     </Tabs>
