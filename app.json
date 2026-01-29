@@ -10,7 +10,13 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.hyrox-tracker"
+      "bundleIdentifier": "com.yourname.hyroxtracker",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to connect to Heart Rate Monitors.",
+        "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to external sensors.",
+        "NSHealthShareUsageDescription": "We use your health data to track your Hyrox training volume and recovery status.",
+        "NSHealthUpdateUsageDescription": "We save your workout data to your health profile."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -21,10 +27,13 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
+      "package": "com.yourname.hyroxtracker",
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_CONNECT"
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -46,9 +55,16 @@
         }
       ],
       "expo-video",
-      "react-native-health",
-      "react-native-ble-plx",
-      "expo-build-properties"
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": [
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Allow Hyrox Engineer to connect to your Heart Rate Monitor."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
