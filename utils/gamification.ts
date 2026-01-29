@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 export const RANKS = [
   { id: 1, title: 'RECRUIT', minXP: 0, benefit: 'Basic Access' },
   { id: 2, title: 'SOLDIER', minXP: 500, benefit: 'Unlocks Stats Graph' },
@@ -28,4 +30,40 @@ export const calculateLevel = (currentXP: number) => {
   }
 
   return { currentRank, nextRank, progress, xpNeeded };
+};
+
+// --- NEW: RETENTION LOGIC ---
+
+export const updateStreak = async () => {
+  const today = new Date().toDateString();
+  const lastLogin = await AsyncStorage.getItem('last_login_date');
+  let currentStreak = parseInt(await AsyncStorage.getItem('user_streak') || '0');
+
+  if (lastLogin !== today) {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (lastLogin === yesterday.toDateString()) {
+      currentStreak += 1; // Continued streak
+    } else {
+      currentStreak = 1; // Broken streak, reset
+    }
+    
+    await AsyncStorage.setItem('last_login_date', today);
+    await AsyncStorage.setItem('user_streak', currentStreak.toString());
+  }
+  return currentStreak;
+};
+
+export const checkCombineStatus = async () => {
+  const lastCombine = await AsyncStorage.getItem('last_combine_date');
+  const currentMonth = new Date().getMonth();
+  
+  if (!lastCombine) return { required: true, month: currentMonth };
+  
+  const lastDate = new Date(lastCombine);
+  return { 
+    required: lastDate.getMonth() !== currentMonth, // True if different month
+    month: currentMonth 
+  };
 };

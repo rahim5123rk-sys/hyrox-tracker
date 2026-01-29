@@ -3,127 +3,130 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { Modal, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// --- TYPES ---
-type WorkoutType = 'Run' | 'Strength' | 'Hybrid' | 'Hyrox' | 'Recovery';
+// IMPORT MASTER DATA
+import { ALL_WORKOUTS } from './data/workouts';
 
-interface PlanDay {
-  day: string;
-  fullDay: string;
-  type: WorkoutType;
-  title: string;
-  subtitle: string;
-  duration: string; // e.g. "60"
-  rpe: string; // 1-10
-  complete: boolean;
-}
-
-// --- CONFIG ---
-const WORKOUT_TYPES: { id: WorkoutType; color: string; icon: any }[] = [
-  { id: 'Run', color: '#007AFF', icon: 'footsteps' },
-  { id: 'Strength', color: '#FF3B30', icon: 'barbell' },
-  { id: 'Hybrid', color: '#FFD700', icon: 'flash' },
-  { id: 'Hyrox', color: '#FF9500', icon: 'trophy' },
-  { id: 'Recovery', color: '#32D74B', icon: 'pulse' },
-];
+const DAYS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
 export default function Planner() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  const [weekPlan, setWeekPlan] = useState<PlanDay[]>([]);
-  const [editingDay, setEditingDay] = useState<PlanDay | null>(null);
-  const [stats, setStats] = useState({ completed: 0, total: 0, hours: 0 });
+  const [weeklyPlan, setWeeklyPlan] = useState<any[]>([]);
+  const [stats, setStats] = useState({ completed: 0, total: 0, xp: 0 });
+  
+  // LOGGING STATE
+  const [isLogModalOpen, setLogModalOpen] = useState(false);
+  const [selectedDayIdx, setSelectedDayIdx] = useState<number | null>(null);
 
-  // --- LOAD DATA ---
   useFocusEffect(
     useCallback(() => {
-      loadSchedule();
+      loadHistory();
     }, [])
   );
 
-  const loadSchedule = async () => {
+  const loadHistory = async () => {
     try {
       const json = await AsyncStorage.getItem('user_weekly_plan');
-      const profileJson = await AsyncStorage.getItem('user_profile');
-      const profile = profileJson ? JSON.parse(profileJson) : { primaryGoal: 'BALANCED' };
+      let data = [];
 
       if (json) {
-        let data = JSON.parse(json);
-        
-        // MIGRATION: If old data format (simple strings), upgrade it to Pro format
-        if (!data[0].title) {
-          data = upgradeToProPlan(data, profile.primaryGoal);
-        }
-        
-        setWeekPlan(data);
-        calculateStats(data);
+        data = JSON.parse(json);
+      } else {
+        // Initialize empty week
+        data = DAYS.map(d => ({ day: d, workouts: [] }));
+        await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(data));
       }
-    } catch (e) {
-      console.log(e);
-    }
+      
+      setWeeklyPlan(data);
+      calculateStats(data);
+    } catch (e) { console.log("Load error", e); }
   };
 
-  // Helper to upgrade simple data to detailed data
-  const upgradeToProPlan = (simpleData: any[], goal: string) => {
-    return simpleData.map((d: any) => ({
-      ...d,
-      fullDay: getFullDay(d.day),
-      title: d.focus || 'WORKOUT',
-      subtitle: getSmartDescription(d.type, goal),
-      duration: d.type === 'Recovery' ? '30' : '60',
-      rpe: d.type === 'Recovery' ? '3' : '8',
-    }));
-  };
-
-  const getFullDay = (short: string) => {
-    const map: any = { MON: 'MONDAY', TUE: 'TUESDAY', WED: 'WEDNESDAY', THU: 'THURSDAY', FRI: 'FRIDAY', SAT: 'SATURDAY', SUN: 'SUNDAY' };
-    return map[short] || short;
-  };
-
-  const getSmartDescription = (type: string, goal: string) => {
-    if (type === 'Run') return goal === 'ENGINE' ? 'Zone 2 Capacity work' : 'Interval Sprints';
-    if (type === 'Strength') return goal === 'STRENGTH' ? 'Heavy compounds (5x5)' : 'High volume hypertrophy';
-    if (type === 'Hyrox') return 'Full race simulation';
-    if (type === 'Recovery') return 'Mobility & light flush';
-    return 'Mixed modal session';
-  };
-
-  const calculateStats = (data: PlanDay[]) => {
-    const completed = data.filter(d => d.complete).length;
-    const totalMins = data.reduce((acc, curr) => acc + (parseInt(curr.duration) || 0), 0);
-    setStats({
-      completed,
-      total: data.length,
-      hours: Math.round(totalMins / 60)
-    });
-  };
-
-  // --- ACTIONS ---
-  const toggleComplete = async (index: number) => {
-    const newData = [...weekPlan];
-    newData[index].complete = !newData[index].complete;
-    setWeekPlan(newData);
-    calculateStats(newData);
-    await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(newData));
-  };
-
-  const saveEdit = async () => {
-    if (!editingDay) return;
+  const calculateStats = (data: any[]) => {
+    let completed = 0;
+    let totalXP = 0;
     
-    const newData = weekPlan.map(d => d.day === editingDay.day ? editingDay : d);
-    setWeekPlan(newData);
-    calculateStats(newData);
-    await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(newData));
-    setEditingDay(null);
+    data.forEach(day => {
+        if (day.workouts) {
+            completed += day.workouts.length;
+            day.workouts.forEach((w: any) => totalXP += (w.xp || 0));
+        }
+    });
+
+    setStats({ completed, total: 7, xp: totalXP });
   };
 
-  const updateEditField = (field: keyof PlanDay, value: any) => {
-    if (editingDay) {
-      setEditingDay({ ...editingDay, [field]: value });
-    }
+  const openLogModal = (dayIdx: number) => {
+    setSelectedDayIdx(dayIdx);
+    setLogModalOpen(true);
+  };
+
+  const logWorkoutToDay = async (workout: any) => {
+    if (selectedDayIdx === null) return;
+
+    const newPlan = [...weeklyPlan];
+    const dayLog = newPlan[selectedDayIdx];
+
+    if (!dayLog.workouts) dayLog.workouts = [];
+
+    // Create Log Entry
+    const entry = {
+        id: `manual-${Date.now()}`,
+        title: workout.title,
+        sessionType: 'MANUAL LOG',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        stats: { 
+            exercises: workout.steps ? workout.steps.length : 0, 
+            sets: workout.rounds || '1' 
+        },
+        complete: true,
+        xp: workout.stats?.xp || 100
+    };
+
+    dayLog.workouts.push(entry);
+    
+    setWeeklyPlan(newPlan);
+    calculateStats(newPlan);
+    await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(newPlan));
+    
+    // Also update Career Stats
+    updateCareerStats(workout.stats);
+
+    setLogModalOpen(false);
+  };
+
+  const updateCareerStats = async (stats: any) => {
+      try {
+        const historyJson = await AsyncStorage.getItem('user_history_stats');
+        const history = historyJson ? JSON.parse(historyJson) : { xp: 0, workouts: 0, run: 0, sled: 0 };
+        
+        const updated = {
+            ...history,
+            xp: history.xp + (stats?.xp || 100),
+            workouts: history.workouts + 1,
+            run: history.run + (stats?.runKm || 0),
+            sled: history.sled + (stats?.sledKm || 0)
+        };
+        
+        await AsyncStorage.setItem('user_history_stats', JSON.stringify(updated));
+      } catch (e) {}
+  };
+
+  const clearDay = async (dayIdx: number) => {
+      Alert.alert("CLEAR LOGS", "Remove all logs for this day?", [
+          { text: "Cancel", style: "cancel" },
+          { text: "Clear", style: "destructive", onPress: async () => {
+              const newPlan = [...weeklyPlan];
+              newPlan[dayIdx].workouts = [];
+              setWeeklyPlan(newPlan);
+              calculateStats(newPlan);
+              await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(newPlan));
+          }}
+      ]);
   };
 
   return (
@@ -133,156 +136,105 @@ export default function Planner() {
       {/* HEADER */}
       <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
+          <Ionicons name="chevron-back" size={24} color="#FFD700" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>WEEKLY PROTOCOL</Text>
-        <View style={{ width: 40 }} /> 
+        <View>
+            <Text style={styles.headerTitle}>SESSION <Text style={{color: '#FFD700'}}>LOG</Text></Text>
+            <Text style={styles.headerSub}>HISTORY & TRACKING</Text>
+        </View>
+        <View style={{width: 40}} /> 
       </View>
 
-      {/* STATS BAR */}
-      <View style={styles.statsBar}>
-        <View style={styles.statItem}>
-            <Text style={styles.statValue}>{stats.completed}/{stats.total}</Text>
-            <Text style={styles.statLabel}>COMPLETE</Text>
+      {/* STATS OVERVIEW */}
+      <View style={styles.statsRow}>
+        <View style={styles.statBox}>
+            <Text style={styles.statNum}>{stats.completed}</Text>
+            <Text style={styles.statLabel}>SESSIONS</Text>
         </View>
         <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-            <Text style={styles.statValue}>{stats.hours}h</Text>
-            <Text style={styles.statLabel}>VOLUME</Text>
-        </View>
-        <View style={styles.statDivider} />
-        <View style={styles.statItem}>
-            <Text style={styles.statValue}>{Math.round((stats.completed/stats.total)*100)}%</Text>
-            <Text style={styles.statLabel}>ADHERENCE</Text>
+        <View style={styles.statBox}>
+            <Text style={styles.statNum}>{stats.xp}</Text>
+            <Text style={styles.statLabel}>XP EARNED</Text>
         </View>
       </View>
 
-      <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
-        {weekPlan.map((item, index) => {
-          const typeConfig = WORKOUT_TYPES.find(t => t.id === item.type) || WORKOUT_TYPES[2];
-          
-          return (
-            <TouchableOpacity 
-              key={index} 
-              style={[styles.card, item.complete && styles.cardComplete]} 
-              activeOpacity={0.9}
-              onPress={() => setEditingDay(item)}
-            >
-              {/* Left Stripe */}
-              <View style={[styles.cardStripe, { backgroundColor: typeConfig.color }]} />
-              
-              <View style={styles.cardContent}>
-                {/* Date & Checkbox */}
-                <View style={styles.cardTop}>
-                  <Text style={[styles.dayText, item.complete && { color: '#666' }]}>{item.fullDay}</Text>
-                  <TouchableOpacity onPress={() => toggleComplete(index)} hitSlop={20}>
-                     <Ionicons 
-                        name={item.complete ? "checkbox" : "square-outline"} 
-                        size={24} 
-                        color={item.complete ? "#FFD700" : "#666"} 
-                     />
-                  </TouchableOpacity>
-                </View>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        {weeklyPlan.map((day, idx) => (
+          <View key={idx} style={styles.dayContainer}>
+            
+            {/* Day Header */}
+            <View style={styles.dayHeader}>
+                <Text style={styles.dayLabel}>{day.day}</Text>
+                <View style={styles.line} />
+                <TouchableOpacity onPress={() => openLogModal(idx)} style={styles.logBtn}>
+                    <Ionicons name="add" size={16} color="#000" />
+                    <Text style={styles.logBtnText}>LOG</Text>
+                </TouchableOpacity>
+                {day.workouts && day.workouts.length > 0 && (
+                    <TouchableOpacity onPress={() => clearDay(idx)} style={{marginLeft: 10}}>
+                        <Ionicons name="trash-outline" size={16} color="#444" />
+                    </TouchableOpacity>
+                )}
+            </View>
 
-                {/* Main Content */}
-                <View style={styles.cardMain}>
-                    <Text style={[styles.cardTitle, item.complete && styles.textComplete]}>{item.title}</Text>
-                    <Text style={styles.cardSub} numberOfLines={1}>{item.subtitle}</Text>
-                </View>
+            {/* Empty State */}
+            {(!day.workouts || day.workouts.length === 0) && (
+                <Text style={styles.emptyText}>No activity recorded.</Text>
+            )}
 
-                {/* Footer Badges */}
-                <View style={styles.cardFooter}>
-                    <View style={[styles.badge, { borderColor: typeConfig.color }]}>
-                        <Ionicons name={typeConfig.icon} size={10} color={typeConfig.color} />
-                        <Text style={[styles.badgeText, { color: typeConfig.color }]}>{item.type.toUpperCase()}</Text>
+            {/* Workout Cards */}
+            {day.workouts && day.workouts.map((wk: any, i: number) => (
+                <View key={i} style={styles.historyCard}>
+                    <View style={styles.cardTop}>
+                        <Text style={styles.sessionType}>{wk.sessionType || 'MANUAL ENTRY'}</Text>
+                        <Text style={styles.timestamp}>{wk.timestamp}</Text>
                     </View>
-                    <View style={styles.badge}>
-                        <Ionicons name="time-outline" size={10} color="#666" />
-                        <Text style={styles.badgeText}>{item.duration} MIN</Text>
-                    </View>
-                    <View style={styles.badge}>
-                        <Text style={[styles.badgeText, { color: '#FFD700' }]}>RPE {item.rpe}</Text>
+                    
+                    <Text style={styles.wkTitle}>{wk.title}</Text>
+                    
+                    <View style={styles.metaRow}>
+                        <View style={styles.badge}>
+                            <Ionicons name="layers-outline" size={10} color="#000" />
+                            <Text style={styles.badgeText}>{wk.stats?.exercises || 0} EXERCISES</Text>
+                        </View>
+                        <View style={styles.badge}>
+                            <Text style={styles.badgeText}>+{wk.xp} XP</Text>
+                        </View>
                     </View>
                 </View>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
+            ))}
+
+          </View>
+        ))}
       </ScrollView>
 
-      {/* --- EDIT MODAL --- */}
-      <Modal visible={!!editingDay} animationType="slide" transparent>
-        <BlurView intensity={80} tint="dark" style={styles.modalContainer}>
-           <View style={[styles.modalContent, { paddingBottom: insets.bottom + 20 }]}>
-              
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>EDIT SESSION</Text>
-                <TouchableOpacity onPress={() => setEditingDay(null)} style={styles.closeBtn}>
-                    <Ionicons name="close" size={24} color="#fff" />
-                </TouchableOpacity>
-              </View>
-
-              {editingDay && (
-                <ScrollView showsVerticalScrollIndicator={false}>
-                    {/* TYPE SELECTOR */}
-                    <Text style={styles.inputLabel}>SESSION TYPE</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.typeScroll}>
-                        {WORKOUT_TYPES.map(t => (
-                            <TouchableOpacity 
-                                key={t.id} 
-                                style={[styles.typeOption, editingDay.type === t.id && { backgroundColor: t.color, borderColor: t.color }]}
-                                onPress={() => updateEditField('type', t.id)}
-                            >
-                                <Ionicons name={t.icon} size={20} color={editingDay.type === t.id ? '#000' : '#fff'} />
-                                <Text style={[styles.typeOptionText, editingDay.type === t.id && { color: '#000' }]}>{t.id}</Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-
-                    {/* TEXT INPUTS */}
-                    <Text style={styles.inputLabel}>FOCUS TITLE</Text>
-                    <TextInput 
-                        style={styles.input} 
-                        value={editingDay.title}
-                        onChangeText={(t) => updateEditField('title', t)}
-                    />
-
-                    <Text style={styles.inputLabel}>DETAILS / EXERCISES</Text>
-                    <TextInput 
-                        style={[styles.input, { height: 80, paddingTop: 15 }]} 
-                        value={editingDay.subtitle}
-                        multiline
-                        onChangeText={(t) => updateEditField('subtitle', t)}
-                    />
-
-                    <View style={{ flexDirection: 'row', gap: 15 }}>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.inputLabel}>DURATION (MIN)</Text>
-                            <TextInput 
-                                style={styles.input} 
-                                value={editingDay.duration}
-                                keyboardType="numeric"
-                                onChangeText={(t) => updateEditField('duration', t)}
-                            />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.inputLabel}>INTENSITY (RPE 1-10)</Text>
-                            <TextInput 
-                                style={styles.input} 
-                                value={editingDay.rpe}
-                                keyboardType="numeric"
-                                maxLength={2}
-                                onChangeText={(t) => updateEditField('rpe', t)}
-                            />
-                        </View>
-                    </View>
-
-                    <TouchableOpacity style={styles.saveBtn} onPress={saveEdit}>
-                        <Text style={styles.saveBtnText}>SAVE CHANGES</Text>
+      {/* LOGGING MODAL */}
+      <Modal visible={isLogModalOpen} animationType="slide" transparent>
+        <BlurView intensity={90} tint="dark" style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+                <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>SELECT MISSION COMPLETED</Text>
+                    <TouchableOpacity onPress={() => setLogModalOpen(false)}>
+                        <Ionicons name="close" size={24} color="#fff" />
                     </TouchableOpacity>
+                </View>
+                
+                <ScrollView showsVerticalScrollIndicator={false}>
+                    {ALL_WORKOUTS.map((wk: any) => (
+                        <TouchableOpacity 
+                            key={wk.id} 
+                            style={styles.optionCard}
+                            onPress={() => logWorkoutToDay(wk)}
+                        >
+                            <View>
+                                <Text style={styles.optionTitle}>{wk.title}</Text>
+                                <Text style={styles.optionSub}>{wk.station} • {wk.level}</Text>
+                            </View>
+                            <Ionicons name="add-circle-outline" size={24} color="#FFD700" />
+                        </TouchableOpacity>
+                    ))}
                 </ScrollView>
-              )}
-           </View>
+            </View>
         </BlurView>
       </Modal>
 
@@ -292,49 +244,44 @@ export default function Planner() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 20 },
-  backBtn: { padding: 8, backgroundColor: '#1E1E1E', borderRadius: 12 },
-  headerTitle: { color: '#FFD700', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
-
-  // STATS
-  statsBar: { flexDirection: 'row', backgroundColor: '#1E1E1E', marginHorizontal: 20, padding: 15, borderRadius: 15, marginBottom: 20, justifyContent: 'space-between', borderWidth: 1, borderColor: '#333' },
-  statItem: { alignItems: 'center', flex: 1 },
-  statValue: { color: '#fff', fontSize: 18, fontWeight: '900' },
-  statLabel: { color: '#666', fontSize: 9, fontWeight: 'bold', marginTop: 2 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 20, borderBottomWidth: 1, borderBottomColor: '#1E1E1E' },
+  backBtn: { padding: 8, backgroundColor: '#1E1E1E', borderRadius: 12, marginRight: 15 },
+  headerTitle: { color: '#fff', fontSize: 20, fontWeight: '900', fontStyle: 'italic' },
+  headerSub: { color: '#666', fontSize: 10, fontWeight: 'bold', letterSpacing: 1 },
+  
+  statsRow: { flexDirection: 'row', backgroundColor: '#121212', margin: 20, borderRadius: 16, padding: 15, borderWidth: 1, borderColor: '#222' },
+  statBox: { flex: 1, alignItems: 'center' },
+  statNum: { color: '#fff', fontSize: 24, fontWeight: '900' },
+  statLabel: { color: '#666', fontSize: 9, fontWeight: 'bold', marginTop: 4 },
   statDivider: { width: 1, backgroundColor: '#333' },
 
-  // CARDS
-  card: { flexDirection: 'row', backgroundColor: '#1E1E1E', marginHorizontal: 20, marginBottom: 12, borderRadius: 12, overflow: 'hidden', height: 110, borderWidth: 1, borderColor: '#252525' },
-  cardComplete: { opacity: 0.6, borderColor: '#333' },
-  cardStripe: { width: 6, height: '100%' },
-  cardContent: { flex: 1, padding: 15, justifyContent: 'space-between' },
+  scrollContent: { paddingHorizontal: 20, paddingBottom: 100 },
   
-  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  dayText: { color: '#888', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  dayContainer: { marginBottom: 25 },
+  dayHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 15 },
+  dayLabel: { color: '#FFD700', fontSize: 12, fontWeight: '900', width: 35 },
+  line: { flex: 1, height: 1, backgroundColor: '#222', marginRight: 15 },
+  logBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFD700', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, gap: 4 },
+  logBtnText: { color: '#000', fontSize: 10, fontWeight: '900' },
   
-  cardMain: { marginVertical: 4 },
-  cardTitle: { color: '#fff', fontSize: 18, fontWeight: '900', marginBottom: 2 },
-  textComplete: { textDecorationLine: 'line-through', color: '#666' },
-  cardSub: { color: '#888', fontSize: 12 },
+  emptyText: { color: '#333', fontSize: 12, fontStyle: 'italic', marginLeft: 35 },
 
-  cardFooter: { flexDirection: 'row', gap: 8 },
-  badge: { flexDirection: 'row', alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#333', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-  badgeText: { color: '#666', fontSize: 9, fontWeight: 'bold' },
-
-  // MODAL
-  modalContainer: { flex: 1, justifyContent: 'flex-end' },
-  modalContent: { height: '85%', backgroundColor: '#121212', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 30 },
-  modalTitle: { color: '#fff', fontSize: 20, fontWeight: '900', letterSpacing: 1 },
-  closeBtn: { padding: 5 },
-
-  inputLabel: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginBottom: 8, marginTop: 15 },
-  input: { backgroundColor: '#1E1E1E', borderRadius: 12, padding: 15, color: '#fff', fontSize: 16, borderWidth: 1, borderColor: '#333' },
+  historyCard: { backgroundColor: '#121212', borderRadius: 16, padding: 15, marginLeft: 35, marginBottom: 10, borderLeftWidth: 2, borderLeftColor: '#FFD700' },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
+  sessionType: { color: '#666', fontSize: 9, fontWeight: '900', letterSpacing: 1 },
+  timestamp: { color: '#444', fontSize: 9, fontWeight: 'bold' },
+  wkTitle: { color: '#fff', fontSize: 16, fontWeight: '900', fontStyle: 'italic', marginBottom: 10 },
   
-  typeScroll: { flexDirection: 'row', gap: 10, marginBottom: 5 },
-  typeOption: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 15, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: '#333', marginRight: 10 },
-  typeOptionText: { color: '#fff', fontWeight: 'bold', fontSize: 12 },
+  metaRow: { flexDirection: 'row', gap: 8 },
+  badge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFD700', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, gap: 4 },
+  badgeText: { color: '#000', fontSize: 9, fontWeight: '900' },
 
-  saveBtn: { backgroundColor: '#FFD700', marginTop: 40, padding: 20, borderRadius: 20, alignItems: 'center', marginBottom: 20 },
-  saveBtnText: { color: '#000', fontWeight: '900', fontSize: 16 },
+  modalOverlay: { flex: 1, justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#121212', height: '80%', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  modalTitle: { color: '#fff', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
+  
+  optionCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 18, backgroundColor: '#1E1E1E', borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: '#333' },
+  optionTitle: { color: '#fff', fontSize: 16, fontWeight: '900', fontStyle: 'italic' },
+  optionSub: { color: '#666', fontSize: 11, marginTop: 2 }
 });

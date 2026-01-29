@@ -12,11 +12,19 @@ export default function WorkoutActive() {
   
   // --- INITIAL SETUP ---
   const [sessionTitle, setSessionTitle] = useState("");
-  const initialSteps = params.steps ? JSON.parse(params.steps as string) : ["Work", "Rest"];
-  const totalRounds = params.rounds ? parseInt((params.rounds as string).match(/\d+/)![0]) : 1;
+
+  // CRITICAL FIX: Robust parsing for steps and rounds to prevent "no datamap" crash
+  const initialSteps = params.steps 
+    ? (typeof params.steps === 'string' ? JSON.parse(params.steps) : ["Warmup", "Work", "Rest"]) 
+    : ["Warmup", "Work", "Rest"];
+
+  // CRITICAL FIX: Convert rounds to string safely before matching, handling both numbers and strings
+  const totalRounds = params.rounds 
+    ? parseInt(String(params.rounds).match(/\d+/)?.[0] || "1") 
+    : 1;
 
   // --- STATE ---
-  const [activeSteps, setActiveSteps] = useState<string[]>(initialSteps);
+  const [activeSteps, setActiveSteps] = useState<string[]>(Array.isArray(initialSteps) ? initialSteps : ["Work", "Rest"]);
   const [currentRound, setCurrentRound] = useState(1);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   
@@ -84,10 +92,9 @@ export default function WorkoutActive() {
 
   const finishWorkout = async (finalSplits: number[]) => {
     setIsActive(false);
-    setShowSummary(true); // Show local summary first
+    setShowSummary(true); 
     Vibration.vibrate(1000);
 
-    // Save in background
     try {
         const formattedSplits = finalSplits.map((time, index) => ({
             name: `ROUND ${index + 1}`,
@@ -105,9 +112,41 @@ export default function WorkoutActive() {
         const existingLogs = await AsyncStorage.getItem('raceHistory');
         const history = existingLogs ? JSON.parse(existingLogs) : [];
         await AsyncStorage.setItem('raceHistory', JSON.stringify([newLog, ...history]));
+        
+        // AUTO-SYNC TO PLANNER
+        await syncToPlanner(params.title || sessionTitle, 100);
+
     } catch (error) {
         console.error("Failed to save workout:", error);
     }
+  };
+
+  const syncToPlanner = async (title: any, xp: number) => {
+    try {
+        const planJson = await AsyncStorage.getItem('user_weekly_plan');
+        const plan = planJson ? JSON.parse(planJson) : [];
+        const jsDay = new Date().getDay(); 
+        const dayIndex = jsDay === 0 ? 6 : jsDay - 1;
+
+        if (plan[dayIndex]) {
+            const hour = new Date().getHours();
+            const sessionType = hour < 12 ? 'MORNING WORKOUT' : hour < 18 ? 'AFTERNOON WORKOUT' : 'EVENING WORKOUT';
+            
+            const newEntry = {
+                id: `log-${Date.now()}`,
+                title: title.toString().toUpperCase(),
+                sessionType: sessionType,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                stats: { exercises: activeSteps.length, sets: totalRounds },
+                complete: true,
+                xp: xp
+            };
+            
+            if (!plan[dayIndex].workouts) plan[dayIndex].workouts = [];
+            plan[dayIndex].workouts.push(newEntry);
+            await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(plan));
+        }
+    } catch (e) { console.log(e); }
   };
 
   const formatTime = (s: number) => {
@@ -116,7 +155,6 @@ export default function WorkoutActive() {
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
-  // --- SUMMARY VIEW ---
   if (showSummary) {
     return (
       <View style={[styles.container, { paddingTop: insets.top + 20 }]}>
@@ -124,7 +162,6 @@ export default function WorkoutActive() {
         <Text style={styles.totalTimeLarge}>{formatTime(totalSeconds)}</Text>
         <Text style={styles.subLabel}>TOTAL WORK TIME</Text>
 
-        {/* DATA GRID INSTEAD OF AI */}
         <View style={styles.statsGrid}>
             <View style={styles.statBox}>
                 <Text style={styles.statLabel}>ROUNDS</Text>
@@ -132,11 +169,11 @@ export default function WorkoutActive() {
             </View>
             <View style={styles.statBox}>
                 <Text style={styles.statLabel}>FASTEST</Text>
-                <Text style={styles.statValue}>{formatTime(Math.min(...roundSplits))}</Text>
+                <Text style={styles.statValue}>{roundSplits.length > 0 ? formatTime(Math.min(...roundSplits)) : "--:--"}</Text>
             </View>
             <View style={styles.statBox}>
                 <Text style={styles.statLabel}>AVG LAP</Text>
-                <Text style={styles.statValue}>{formatTime(Math.round(totalSeconds / totalRounds))}</Text>
+                <Text style={styles.statValue}>{roundSplits.length > 0 ? formatTime(Math.round(totalSeconds / roundSplits.length)) : "--:--"}</Text>
             </View>
         </View>
 
@@ -149,14 +186,13 @@ export default function WorkoutActive() {
             ))}
         </ScrollView>
 
-        <TouchableOpacity style={styles.saveBtn} onPress={() => { router.dismissAll(); router.replace('/(tabs)/history'); }}>
-          <Text style={styles.saveBtnText}>SAVE & VIEW LOGS</Text>
+        <TouchableOpacity style={styles.saveBtn} onPress={() => { router.dismissAll(); router.replace('/'); }}>
+          <Text style={styles.saveBtnText}>RETURN TO BASE</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
-  // --- ACTIVE VIEW (Unchanged from previous logic) ---
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -257,10 +293,8 @@ const styles = StyleSheet.create({
   addSetText: { color: '#fff', fontSize: 9, fontWeight: 'bold', marginTop: 2 },
   nextBtn: { flex: 0.7, backgroundColor: '#FFD700', borderRadius: 16, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, paddingVertical: 15 },
   nextBtnText: { color: '#000', fontSize: 16, fontWeight: '900' },
-
-  // Summary Styles
   summaryHeader: { color: '#fff', fontSize: 18, fontWeight: '900', textAlign: 'center', marginBottom: 10, letterSpacing: 1 },
-  totalTimeLarge: { color: '#fff', fontSize: 60, fontWeight: 'bold', textAlign: 'center', fontFamily: 'Courier' },
+  totalTimeLarge: { color: '#FFD700', fontSize: 60, fontWeight: 'bold', textAlign: 'center', fontFamily: 'Courier' },
   subLabel: { color: '#444', fontSize: 10, fontWeight: '900', textAlign: 'center', marginBottom: 30 },
   statsGrid: { flexDirection: 'row', gap: 10, marginBottom: 30 },
   statBox: { flex: 1, backgroundColor: '#111', padding: 15, borderRadius: 12, alignItems: 'center' },
