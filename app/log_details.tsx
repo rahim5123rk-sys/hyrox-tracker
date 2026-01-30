@@ -1,162 +1,150 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo } from 'react';
-import { Dimensions, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { LineChart } from "react-native-chart-kit";
+import { useEffect, useMemo, useState } from 'react';
+import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-const screenWidth = Dimensions.get("window").width;
+// REUSE THE CHART COMPONENT
+import { DebriefChart } from '../components/DebriefChart';
+// IMPORT THE NEW COMPONENT
+import { RunningMetrics } from '../components/RunningMetrics';
+
+interface Split {
+  name: string;
+  actual: number;
+  target: number;
+}
 
 export default function LogDetails() {
   const router = useRouter();
-  const { data, date, totalTime } = useLocalSearchParams();
-
-  let raceData: any[] = [];
-  try {
-    raceData = data ? JSON.parse(data as string) : [];
-  } catch (e) { console.error(e); }
-
-  // --- NEW: DATA DRIVEN INSIGHTS (No more static text) ---
-  const stats = useMemo(() => {
-    if (raceData.length === 0) return null;
-
-    // 1. Calculate Pacing Strategy (First Half vs Second Half)
-    const half = Math.floor(raceData.length / 2);
-    // Handle edge case of 1 round
-    if (half === 0) return { pacing: "SINGLE ROUND", fastest: raceData[0], slowest: raceData[0], consistency: "0.0", avg: raceData[0].actual };
-
-    const firstHalfAvg = raceData.slice(0, half).reduce((a, b) => a + b.actual, 0) / half;
-    const secondHalfAvg = raceData.slice(half).reduce((a, b) => a + b.actual, 0) / (raceData.length - half);
-    
-    // Negative Split = You got faster (Good). Positive Split = You faded (Bad).
-    const pacing = secondHalfAvg < firstHalfAvg 
-        ? "NEGATIVE SPLIT (Strong Finish)" 
-        : `POSITIVE SPLIT (Faded by ${Math.round(((secondHalfAvg - firstHalfAvg) / firstHalfAvg) * 100)}%)`;
-
-    // 2. Identify Extremes
-    const sorted = [...raceData].sort((a, b) => a.actual - b.actual);
-    const fastest = sorted[0];
-    const slowest = sorted[sorted.length - 1];
-
-    // 3. Consistency (Standard Deviation)
-    const avg = raceData.reduce((a, b) => a + b.actual, 0) / raceData.length;
-    const variance = raceData.reduce((a, b) => a + Math.pow(b.actual - avg, 2), 0) / raceData.length;
-    const consistency = Math.sqrt(variance).toFixed(1);
-
-    return { pacing, fastest, slowest, consistency, avg: avg.toFixed(1) };
-  }, [raceData]);
-
-  // Chart Data - Using actuals only for clearer training visualization
-  const actuals = raceData.map(item => item.actual);
+  const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams();
   
+  const [splits, setSplits] = useState<Split[]>([]);
+  const [totalTime, setTotalTime] = useState('--:--');
+  const [date, setDate] = useState('');
+
+  useEffect(() => {
+    // FIX: Only parse if the DATA string specifically changes
+    if (params.data && typeof params.data === 'string') {
+        try {
+            const parsed = JSON.parse(params.data);
+            setSplits(parsed);
+        } catch (e) {
+            console.log('Error parsing split data');
+        }
+    }
+    if (params.totalTime) setTotalTime(params.totalTime as string);
+    if (params.date) setDate(params.date as string);
+  }, [params.data, params.totalTime, params.date]);
+
+  // MATH ENGINE (Filter out finish line for stats)
+  const validSplits = useMemo(() => splits.filter(s => s.name !== 'FINISH'), [splits]);
+
+  const totalTargetSeconds = validSplits.reduce((acc, s) => acc + s.target, 0);
+  const totalActualSeconds = validSplits.reduce((acc, s) => acc + s.actual, 0);
+  const diffSeconds = totalActualSeconds - totalTargetSeconds;
+
+  const getStatusColor = (diff: number) => {
+      if (diff <= 0) return '#32D74B'; 
+      if (diff < 15) return '#FFD700'; 
+      return '#FF453A'; 
+  };
+
+  const formatTime = (seconds: number) => {
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return `${m}:${s < 10 ? '0' : ''}${s}`;
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
       
       {/* HEADER */}
-      <View style={styles.header}>
+      <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Text style={styles.backText}>← BACK TO LOG</Text>
+            <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.dateLabel}>{date}</Text>
-        <Text style={styles.totalTime}>{totalTime}</Text>
+        <View>
+            <Text style={styles.title}>MISSION <Text style={{color: '#FFD700'}}>LOG</Text></Text>
+            <Text style={styles.date}>{date}</Text>
+        </View>
+        <View style={{width: 24}} /> 
       </View>
 
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingBottom: 60}}>
+      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         
-        {/* NEW: INTELLIGENCE GRID */}
-        {stats && (
-            <View style={styles.statsContainer}>
-                {/* STRATEGY CARD */}
-                <View style={styles.statCardFull}>
-                    <Text style={styles.statLabel}>PACING STRATEGY</Text>
-                    <Text style={[styles.statValue, { color: stats.pacing.includes("NEGATIVE") ? '#32D74B' : '#FF453A' }]}>
-                        {stats.pacing}
-                    </Text>
-                </View>
-
-                {/* METRICS ROW */}
-                <View style={styles.row}>
-                    <View style={[styles.statCard, { marginRight: 10 }]}>
-                        <Text style={styles.statLabel}>BEST ROUND</Text>
-                        <Text style={styles.statValue}>{formatMinSec(stats.fastest.actual)}</Text>
-                        <Text style={styles.statSub}>{stats.fastest.name}</Text>
-                    </View>
-                    <View style={styles.statCard}>
-                        <Text style={styles.statLabel}>CONSISTENCY</Text>
-                        <Text style={styles.statValue}>±{stats.consistency}s</Text>
-                        <Text style={styles.statSub}>AVG: {formatMinSec(parseFloat(stats.avg))}</Text>
-                    </View>
-                </View>
+        {/* SUMMARY CARDS */}
+        <View style={styles.summaryRow}>
+            <View style={styles.card}>
+                <Text style={styles.cardLabel}>TOTAL TIME</Text>
+                <Text style={styles.cardValue}>{totalTime}</Text>
             </View>
-        )}
-
-        {/* CHART */}
-        <View style={styles.chartWrapper}>
-            <Text style={styles.sectionTitle}>PERFORMANCE CURVE</Text>
-            <LineChart
-                data={{
-                    labels: actuals.map((_, i) => (i % 2 === 0 ? `${i + 1}` : "")), // Numbered labels
-                    datasets: [{ data: actuals, color: (opacity = 1) => `#FFD700`, strokeWidth: 3 }]
-                }}
-                width={screenWidth - 40}
-                height={200}
-                chartConfig={chartConfig}
-                bezier
-                style={styles.chart}
-            />
+            <View style={styles.card}>
+                <Text style={styles.cardLabel}>PERFORMANCE</Text>
+                <Text style={[styles.cardValue, { color: getStatusColor(diffSeconds) }]}>
+                    {diffSeconds > 0 ? '+' : ''}{diffSeconds}s
+                </Text>
+                <Text style={styles.cardSub}>{diffSeconds > 0 ? 'BEHIND TARGET' : 'AHEAD OF TARGET'}</Text>
+            </View>
         </View>
 
-        {/* LIST BREAKDOWN */}
-        <View style={styles.listSection}>
-            <Text style={styles.sectionTitle}>ROUND BREAKDOWN</Text>
-            {raceData.map((item, i) => (
-                <View key={i} style={styles.listRow}>
-                    <Text style={styles.rowName}>{item.name}</Text>
-                    <Text style={styles.rowTime}>{formatMinSec(item.actual)}</Text>
-                </View>
-            ))}
+        {/* THE CHART */}
+        <DebriefChart splits={validSplits} />
+
+        {/* RUNNING METRICS */}
+        <RunningMetrics splits={validSplits} />
+
+        {/* DETAILED TABLE */}
+        <View style={styles.table}>
+            <View style={styles.tableHeader}>
+                <Text style={[styles.col, {flex: 2}]}>STATION</Text>
+                <Text style={styles.col}>TARGET</Text>
+                <Text style={styles.col}>ACTUAL</Text>
+                <Text style={[styles.col, {textAlign: 'right'}]}>+/-</Text>
+            </View>
+            {validSplits.map((split, i) => {
+                const diff = split.actual - split.target;
+                const isRun = split.name.includes('RUN');
+                
+                return (
+                    <View key={i} style={[styles.row, i % 2 === 0 && {backgroundColor: '#1A1A1A'}]}>
+                         <View style={{flex: 2, flexDirection: 'row', alignItems: 'center', gap: 6}}>
+                            {isRun && <Ionicons name="walk" size={10} color="#666" />}
+                            <Text style={[styles.cell, {color: '#fff'}]}>{split.name}</Text>
+                        </View>
+                        <Text style={styles.cell}>{formatTime(split.target)}</Text>
+                        <Text style={styles.cell}>{formatTime(split.actual)}</Text>
+                        <Text style={[styles.cell, {textAlign: 'right', color: getStatusColor(diff), fontWeight: 'bold'}]}>
+                            {diff > 0 ? '+' : ''}{diff}s
+                        </Text>
+                    </View>
+                );
+            })}
         </View>
+        
+        <View style={{height: 50}} />
       </ScrollView>
     </View>
   );
 }
 
-const formatMinSec = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = Math.round(secs % 60);
-    return `${m}:${s < 10 ? '0' : ''}${s}`;
-};
-
-const chartConfig = {
-    backgroundGradientFrom: "#1E1E1E",
-    backgroundGradientTo: "#1E1E1E",
-    color: (opacity = 1) => `rgba(255, 215, 0, ${opacity})`,
-    labelColor: () => `#888`,
-    strokeWidth: 2,
-    propsForDots: { r: "4", strokeWidth: "2", stroke: "#000" }
-};
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  header: { backgroundColor: '#111', padding: 20, paddingTop: 60, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#222' },
-  backBtn: { alignSelf: 'flex-start', marginBottom: 10 },
-  backText: { color: '#FFD700', fontWeight: 'bold', fontSize: 12 },
-  dateLabel: { color: '#666', fontSize: 12, fontWeight: 'bold' },
-  totalTime: { color: '#fff', fontSize: 48, fontWeight: '900', fontStyle: 'italic', fontFamily: 'Courier' }, // Monospace helps alignment
-  
-  statsContainer: { padding: 20 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
-  statCardFull: { backgroundColor: '#1E1E1E', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#333' },
-  statCard: { flex: 1, backgroundColor: '#1E1E1E', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#333' },
-  statLabel: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 5, letterSpacing: 1 },
-  statValue: { color: '#fff', fontSize: 24, fontWeight: '900' },
-  statSub: { color: '#888', fontSize: 11, fontWeight: 'bold', marginTop: 4 },
-
-  chartWrapper: { paddingHorizontal: 20, marginBottom: 20 },
-  sectionTitle: { color: '#444', fontSize: 11, fontWeight: '900', marginBottom: 15, letterSpacing: 1 },
-  chart: { borderRadius: 16 },
-
-  listSection: { paddingHorizontal: 20 },
-  listRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
-  rowName: { color: '#ccc', fontSize: 14, fontWeight: 'bold' },
-  rowTime: { color: '#FFD700', fontSize: 18, fontWeight: 'bold', fontFamily: 'Courier' }
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 25, borderBottomWidth: 1, borderBottomColor: '#222' },
+  backBtn: { padding: 5 },
+  title: { color: '#fff', fontSize: 20, fontWeight: '900', fontStyle: 'italic', textAlign: 'center' },
+  date: { color: '#666', fontSize: 10, fontWeight: 'bold', marginTop: 2, textAlign: 'center', letterSpacing: 1 },
+  scroll: { padding: 20 },
+  summaryRow: { flexDirection: 'row', gap: 15, marginBottom: 25 },
+  card: { flex: 1, backgroundColor: '#1E1E1E', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#333' },
+  cardLabel: { color: '#888', fontSize: 10, fontWeight: '900', marginBottom: 5 },
+  cardValue: { color: '#fff', fontSize: 28, fontWeight: '900' },
+  cardSub: { color: '#666', fontSize: 9, fontWeight: 'bold', marginTop: 5 },
+  table: { backgroundColor: '#1E1E1E', borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: '#333', marginBottom: 30 },
+  tableHeader: { flexDirection: 'row', padding: 12, backgroundColor: '#252525', borderBottomWidth: 1, borderBottomColor: '#333' },
+  row: { flexDirection: 'row', padding: 12, borderBottomWidth: 1, borderBottomColor: '#222' },
+  col: { flex: 1, color: '#888', fontSize: 9, fontWeight: '900' },
+  cell: { flex: 1, color: '#ccc', fontSize: 11, fontWeight: '500', fontVariant: ['tabular-nums'] },
 });

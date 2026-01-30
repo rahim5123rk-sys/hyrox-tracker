@@ -1,6 +1,25 @@
+import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { useRouter } from 'expo-router';
-import { ImageBackground, Linking, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useState } from 'react';
+import {
+  FlatList,
+  ImageBackground,
+  Linking,
+  Modal,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+// IMPORT REAL DATA
+import { Region, UPCOMING_RACES } from '../data/races';
+
+const REGIONS: (Region | 'ALL')[] = ['ALL', 'UK', 'EUROPE', 'USA', 'APAC', 'LATAM'];
 
 const DISCOVER_ITEMS = [
   {
@@ -26,10 +45,19 @@ const DISCOVER_ITEMS = [
 export default function Discover() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  
+  // RACE FINDER STATE
+  const [isRaceFinderOpen, setRaceFinderOpen] = useState(false);
+  const [activeRegion, setActiveRegion] = useState<Region | 'ALL'>('ALL');
 
   const handleOpenLink = (url: string) => {
     if (url !== '#') Linking.openURL(url);
   };
+
+  // Filter Races logic
+  const filteredRaces = activeRegion === 'ALL' 
+    ? UPCOMING_RACES.sort((a, b) => new Date(a.isoDate).getTime() - new Date(b.isoDate).getTime())
+    : UPCOMING_RACES.filter(r => r.region === activeRegion).sort((a, b) => new Date(a.isoDate).getTime() - new Date(b.isoDate).getTime());
 
   return (
     <View style={styles.container}>
@@ -80,11 +108,11 @@ export default function Discover() {
             </ImageBackground>
         </TouchableOpacity>
 
-        {/* LINK 3: GLOBAL RACE CALENDAR (NEW) */}
+        {/* LINK 3: FIND A RACE (TRIGGERS MODAL) */}
         <TouchableOpacity 
             activeOpacity={0.9} 
             style={[styles.guideCard, { borderColor: '#0A84FF' }]} 
-            onPress={() => router.push('/race_calendar')}
+            onPress={() => setRaceFinderOpen(true)}
         >
             <ImageBackground 
               source={{ uri: 'https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?q=80&w=1000' }} 
@@ -92,9 +120,9 @@ export default function Discover() {
               imageStyle={{ borderRadius: 30, opacity: 0.6 }}
             >
               <View style={styles.overlayCenter}>
-                <Text style={[styles.guideTitle, {color: '#0A84FF'}]}>GLOBAL CALENDAR</Text>
-                <Text style={styles.guideSub}>FIND RACES BY REGION</Text>
-                <View style={[styles.guideBtn, {backgroundColor: '#0A84FF'}]}><Text style={styles.guideBtnText}>VIEW EVENTS</Text></View>
+                <Text style={[styles.guideTitle, {color: '#0A84FF'}]}>FIND A RACE NEAR YOU</Text>
+                <Text style={styles.guideSub}>{UPCOMING_RACES.length} UPCOMING DEPLOYMENTS</Text>
+                <View style={[styles.guideBtn, {backgroundColor: '#0A84FF'}]}><Text style={styles.guideBtnText}>VIEW CALENDAR</Text></View>
               </View>
             </ImageBackground>
         </TouchableOpacity>
@@ -134,6 +162,73 @@ export default function Discover() {
         ))}
         <View style={{ height: 120 }} />
       </ScrollView>
+
+      {/* RACE FINDER MODAL */}
+      <Modal visible={isRaceFinderOpen} animationType="slide" transparent={true} onRequestClose={() => setRaceFinderOpen(false)}>
+        <BlurView intensity={90} tint="dark" style={styles.modalContainer}>
+            <View style={[styles.modalContent, { paddingTop: insets.top + 20 }]}>
+                
+                {/* Modal Header */}
+                <View style={styles.modalHeaderRow}>
+                    <View>
+                        <Text style={styles.modalTitle}>GLOBAL DEPLOYMENTS</Text>
+                        <Text style={styles.modalSub}>{filteredRaces.length} EVENTS FOUND</Text>
+                    </View>
+                    <TouchableOpacity onPress={() => setRaceFinderOpen(false)} style={styles.closeBtn}>
+                        <Ionicons name="close-circle" size={36} color="#444" />
+                    </TouchableOpacity>
+                </View>
+
+                {/* Region Filter */}
+                <View style={{ height: 45, marginBottom: 15 }}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                        {REGIONS.map((region) => (
+                            <TouchableOpacity 
+                                key={region} 
+                                style={[styles.regionChip, activeRegion === region && styles.regionChipActive]}
+                                onPress={() => setActiveRegion(region)}
+                            >
+                                <Text style={[styles.regionText, activeRegion === region && {color: '#000'}]}>{region}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+
+                {/* Race List */}
+                <FlatList
+                    data={filteredRaces}
+                    keyExtractor={item => item.id}
+                    showsVerticalScrollIndicator={false}
+                    contentContainerStyle={{ paddingBottom: 50 }}
+                    renderItem={({ item }) => (
+                        <TouchableOpacity 
+                            style={styles.raceRow} 
+                            onPress={() => Linking.openURL(item.url)}
+                        >
+                            <View style={styles.dateBadge}>
+                                <Text style={styles.dateMonth}>
+                                    {new Date(item.isoDate).toLocaleString('default', { month: 'short', timeZone: 'UTC' }).toUpperCase()}
+                                </Text>
+                                <Text style={styles.dateDay}>
+                                    {item.isoDate.startsWith('2099') ? '?' : new Date(item.isoDate).getUTCDate()}
+                                </Text>
+                            </View>
+                            <View style={{flex: 1}}>
+                                <View style={{flexDirection:'row', alignItems:'center', gap: 6}}>
+                                    <Text style={styles.raceCity}>{item.city}</Text>
+                                    {item.type === 'MAJOR' && <Ionicons name="star" size={10} color="#FFD700" />}
+                                </View>
+                                <Text style={styles.raceVenue}>{item.venue}</Text>
+                                <Text style={styles.raceDate}>{item.date}</Text>
+                            </View>
+                            <Ionicons name="chevron-forward" size={20} color="#444" />
+                        </TouchableOpacity>
+                    )}
+                />
+            </View>
+        </BlurView>
+      </Modal>
+
     </View>
   );
 }
@@ -148,7 +243,7 @@ const styles = StyleSheet.create({
   // SPECIAL CARDS
   guideCard: { height: 180, marginBottom: 20, borderRadius: 30, overflow: 'hidden', borderWidth: 1, borderColor: '#FFD700' },
   overlayCenter: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
-  guideTitle: { color: '#FFD700', fontSize: 24, fontWeight: '900', fontStyle: 'italic', letterSpacing: 1 },
+  guideTitle: { color: '#FFD700', fontSize: 24, fontWeight: '900', fontStyle: 'italic', letterSpacing: 1, textAlign: 'center' },
   guideSub: { color: '#fff', fontSize: 10, fontWeight: 'bold', letterSpacing: 2, marginBottom: 15 },
   guideBtn: { backgroundColor: '#FFD700', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20 },
   guideBtnText: { color: '#000', fontWeight: '900', fontSize: 10 },
@@ -165,4 +260,26 @@ const styles = StyleSheet.create({
   cardDesc: { color: '#bbb', fontSize: 14, lineHeight: 20, marginBottom: 15 },
   actionBtn: { backgroundColor: '#fff', paddingVertical: 14, borderRadius: 15, alignItems: 'center', width: '100%' },
   actionBtnText: { color: '#000', fontSize: 12, fontWeight: '900', letterSpacing: 1 },
+
+  // MODAL STYLES
+  modalContainer: { flex: 1, justifyContent: 'flex-end' },
+  modalContent: { height: '92%', backgroundColor: '#121212', borderTopLeftRadius: 30, borderTopRightRadius: 30, paddingHorizontal: 25 },
+  modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
+  modalTitle: { color: '#fff', fontSize: 24, fontWeight: '900', fontStyle: 'italic', letterSpacing: -1 },
+  modalSub: { color: '#666', fontSize: 11, fontWeight: 'bold', letterSpacing: 1, marginTop: 4 },
+  closeBtn: { padding: 5, marginTop: -5 },
+  
+  // CHIPS
+  regionChip: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, backgroundColor: '#1E1E1E', borderWidth: 1, borderColor: '#333', justifyContent: 'center' },
+  regionChipActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
+  regionText: { color: '#666', fontWeight: '900', fontSize: 10 },
+
+  // RACE ROW
+  raceRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: '#222', gap: 15 },
+  dateBadge: { alignItems: 'center', backgroundColor: '#1E1E1E', paddingVertical: 8, width: 50, borderRadius: 10, borderWidth: 1, borderColor: '#333' },
+  dateMonth: { color: '#FFD700', fontSize: 9, fontWeight: '900' },
+  dateDay: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  raceCity: { color: '#fff', fontSize: 16, fontWeight: '900', fontStyle: 'italic' },
+  raceVenue: { color: '#888', fontSize: 11, fontWeight: '500' },
+  raceDate: { color: '#555', fontSize: 10, fontWeight: 'bold', marginTop: 2 },
 });

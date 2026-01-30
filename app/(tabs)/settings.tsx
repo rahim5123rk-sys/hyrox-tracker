@@ -1,29 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import * as Updates from 'expo-updates';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, StatusBar, StyleSheet, Switch, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-// --- YOUR ORIGINAL CATEGORY DATA ---
-const CATEGORIES = [
-  { id: 'MEN_OPEN', label: "MEN'S OPEN" },
-  { id: 'MEN_PRO', label: "MEN'S PRO" },
-  { id: 'WOMEN_OPEN', label: "WOMEN'S OPEN" },
-  { id: 'WOMEN_PRO', label: "WOMEN'S PRO" },
-];
+import { CATEGORIES } from '../../utils/pacing';
 
 export default function Settings() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  // State from your original code
-  const [selectedCategory, setSelectedCategory] = useState('MEN_OPEN');
-  
-  // New State for toggles
-  const [voiceCoach, setVoiceCoach] = useState(true);
-  const [darkMode, setDarkMode] = useState(true);
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('MEN_OPEN'); 
+  const [notifications, setNotifications] = useState(true);
+  const [haptics, setHaptics] = useState(true);
 
   useEffect(() => {
     loadSettings();
@@ -31,40 +21,47 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
-      const saved = await AsyncStorage.getItem('userCategory');
-      if (saved) setSelectedCategory(saved);
+      const profile = await AsyncStorage.getItem('user_profile');
+      if (profile) {
+          const p = JSON.parse(profile);
+          if (p.name) setName(p.name);
+      }
+      
+      const savedCat = await AsyncStorage.getItem('userCategory');
+      if (savedCat) setCategory(savedCat);
+
     } catch (e) {
       console.log('Failed to load settings');
     }
   };
 
-  const saveCategory = async (id: string) => {
+  const saveSettings = async () => {
     try {
-      await AsyncStorage.setItem('userCategory', id);
-      setSelectedCategory(id);
-      // Haptic feedback or subtle alert
-      Alert.alert("UPDATED", "Race weights adjusted for " + id.replace('_', ' '));
+      const existing = await AsyncStorage.getItem('user_profile');
+      const profile = existing ? JSON.parse(existing) : {};
+      profile.name = name;
+      
+      await AsyncStorage.setItem('user_profile', JSON.stringify(profile));
+      await AsyncStorage.setItem('userCategory', category);
+      
+      Alert.alert('Success', 'Configuration updated.');
     } catch (e) {
-      console.log('Failed to save');
+      Alert.alert('Error', 'Could not save settings.');
     }
   };
 
-  const handleClearData = () => {
-    Alert.alert(
-      "FACTORY RESET",
-      "This will wipe all race logs and settings. Cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        { 
-          text: "WIPE DATA", 
-          style: 'destructive', 
-          onPress: async () => {
-            await AsyncStorage.clear();
-            Updates.reloadAsync();
-          }
-        }
-      ]
-    );
+  const handleReset = () => {
+      Alert.alert(
+          "Factory Reset",
+          "This will delete all race history, personal bests, and settings. Are you sure?",
+          [
+              { text: "Cancel", style: "cancel" },
+              { text: "Delete Everything", style: "destructive", onPress: async () => {
+                  await AsyncStorage.clear();
+                  router.replace('/onboarding');
+              }}
+          ]
+      );
   };
 
   return (
@@ -72,114 +69,105 @@ export default function Settings() {
       <StatusBar barStyle="light-content" />
       
       <View style={[styles.header, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.title}>SETTINGS</Text>
-        <Text style={styles.subtitle}>SYSTEM CONFIGURATION</Text>
+        <Text style={styles.title}>SYSTEM <Text style={{color: '#FFD700'}}>SETTINGS</Text></Text>
       </View>
 
-      <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.scroll}>
         
-        {/* --- SECTION 1: RACE CATEGORY (RESTORED) --- */}
-        <Text style={styles.sectionTitle}>RACE CATEGORY</Text>
+        {/* 1. IDENTITY */}
         <View style={styles.section}>
+            <Text style={styles.sectionTitle}>IDENTITY</Text>
+            <View style={styles.inputRow}>
+                <Text style={styles.label}>CODENAME</Text>
+                <TextInput 
+                    style={styles.input} 
+                    value={name} 
+                    onChangeText={setName} 
+                    placeholder="ATHLETE" 
+                    placeholderTextColor="#555"
+                />
+            </View>
+        </View>
+
+        {/* 2. DEFAULT DIVISION (NEW FEATURE) */}
+        <View style={styles.section}>
+            <View style={{flexDirection:'row', justifyContent:'space-between', marginBottom: 15}}>
+                <Text style={styles.sectionTitle}>DEFAULT DIVISION</Text>
+                <Ionicons name="body-outline" size={16} color="#FFD700" />
+            </View>
+            
             <View style={styles.grid}>
-                {CATEGORIES.map((cat) => (
+                {Object.keys(CATEGORIES).map((cat) => (
                     <TouchableOpacity 
-                        key={cat.id} 
-                        style={[styles.option, selectedCategory === cat.id && styles.active]}
-                        onPress={() => saveCategory(cat.id)}
+                        key={cat} 
+                        style={[styles.catBtn, category === cat && styles.catBtnActive]}
+                        onPress={() => setCategory(cat)}
                     >
-                        <Text style={[styles.optionText, selectedCategory === cat.id && styles.activeText]}>
-                            {cat.label}
+                        <Text style={[styles.catText, category === cat && {color: '#000'}]}>
+                            {CATEGORIES[cat as keyof typeof CATEGORIES].label}
                         </Text>
+                        {category === cat && <Ionicons name="checkmark-circle" size={16} color="#000" style={{marginTop: 4}} />}
                     </TouchableOpacity>
                 ))}
             </View>
         </View>
 
-        {/* --- SECTION 2: CONNECTIONS (NEW) --- */}
-        <Text style={styles.sectionTitle}>INTEGRATIONS</Text>
+        {/* 3. HEALTH & WEARABLES (RESTORED LINKS) */}
         <View style={styles.section}>
-            <TouchableOpacity style={styles.row} onPress={() => router.push('/integrations')}>
-                <View style={styles.rowLeft}>
-                    <View style={[styles.iconBox, { backgroundColor: '#FF453A' }]}>
-                        <Ionicons name="heart" size={18} color="#fff" />
-                    </View>
-                    <Text style={styles.rowLabel}>Health & Wearables</Text>
-                </View>
-                <View style={styles.rowRight}>
-                    <Text style={styles.rowStatus}>Apple / Garmin</Text>
-                    <Ionicons name="chevron-forward" size={18} color="#666" />
-                </View>
-            </TouchableOpacity>
+            <Text style={styles.sectionTitle}>CONNECTED HARDWARE & APPS</Text>
             
-            <View style={styles.divider} />
+            {/* Link to Devices (HRM/Bluetooth) */}
+            <TouchableOpacity style={styles.linkRow} onPress={() => router.push('/devices')}>
+                <View style={{flexDirection: 'row', alignItems: 'center', gap: 12}}>
+                    <View style={styles.iconBox}><Ionicons name="bluetooth" size={18} color="#007AFF" /></View>
+                    <Text style={styles.linkLabel}>Heart Rate Monitors</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={20} color="#444" />
+            </TouchableOpacity>
 
-            <TouchableOpacity style={styles.row} onPress={() => router.push('/devices')}>
-                <View style={styles.rowLeft}>
-                    <View style={[styles.iconBox, { backgroundColor: '#0A84FF' }]}>
-                        <Ionicons name="bluetooth" size={18} color="#fff" />
-                    </View>
-                    <Text style={styles.rowLabel}>Device Radar</Text>
+            {/* Link to Integrations (Strava/Apple Health) */}
+            <TouchableOpacity style={[styles.linkRow, {borderBottomWidth: 0}]} onPress={() => router.push('/integrations')}>
+                <View style={{flexDirection: 'row', alignItems: 'center', gap: 12}}>
+                    <View style={[styles.iconBox, {backgroundColor: 'rgba(255, 45, 85, 0.15)'}]}><Ionicons name="heart" size={18} color="#FF2D55" /></View>
+                    <Text style={styles.linkLabel}>Health & Integrations</Text>
                 </View>
-                <View style={styles.rowRight}>
-                    <Text style={styles.rowStatus}>Polar / Whoop</Text>
-                    <Ionicons name="chevron-forward" size={18} color="#666" />
-                </View>
+                <Ionicons name="chevron-forward" size={20} color="#444" />
             </TouchableOpacity>
         </View>
 
-        {/* --- SECTION 3: PREFERENCES (MERGED) --- */}
-        <Text style={styles.sectionTitle}>APP PREFERENCES</Text>
+        {/* 4. INTERFACE PREFERENCES */}
         <View style={styles.section}>
-            <View style={styles.row}>
-                <View style={styles.rowLeft}>
-                    <View style={[styles.iconBox, { backgroundColor: '#FFD700' }]}>
-                        <Ionicons name="mic" size={18} color="#000" />
-                    </View>
-                    <Text style={styles.rowLabel}>Voice Coach</Text>
-                </View>
+            <Text style={styles.sectionTitle}>INTERFACE</Text>
+            
+            <View style={styles.switchRow}>
+                <Text style={styles.switchLabel}>HAPTIC FEEDBACK</Text>
                 <Switch 
-                    value={voiceCoach} 
-                    onValueChange={setVoiceCoach}
-                    trackColor={{ false: '#333', true: '#FFD700' }} 
-                    thumbColor={voiceCoach ? '#fff' : '#888'}
+                    value={haptics} 
+                    onValueChange={setHaptics} 
+                    trackColor={{false: '#333', true: '#FFD700'}} 
+                    thumbColor={haptics ? '#000' : '#f4f3f4'}
                 />
             </View>
-
-            <View style={styles.divider} />
-
-            <View style={styles.row}>
-                <View style={styles.rowLeft}>
-                    <View style={[styles.iconBox, { backgroundColor: '#333' }]}>
-                        <Ionicons name="moon" size={18} color="#fff" />
-                    </View>
-                    <Text style={styles.rowLabel}>Dark Mode</Text>
-                </View>
+            <View style={[styles.switchRow, {borderBottomWidth: 0}]}>
+                <Text style={styles.switchLabel}>PUSH NOTIFICATIONS</Text>
                 <Switch 
-                    value={darkMode} 
-                    onValueChange={setDarkMode}
-                    trackColor={{ false: '#333', true: '#FFD700' }} 
-                    thumbColor={darkMode ? '#fff' : '#888'}
+                    value={notifications} 
+                    onValueChange={setNotifications} 
+                    trackColor={{false: '#333', true: '#FFD700'}} 
+                    thumbColor={notifications ? '#000' : '#f4f3f4'}
                 />
             </View>
         </View>
 
-        {/* --- SECTION 4: DANGER ZONE --- */}
-        <Text style={styles.sectionTitle}>DATA MANAGEMENT</Text>
-        <View style={styles.section}>
-            <TouchableOpacity style={styles.row} onPress={handleClearData}>
-                <View style={styles.rowLeft}>
-                    <View style={[styles.iconBox, { backgroundColor: '#333' }]}>
-                        <Ionicons name="trash" size={18} color="#FF453A" />
-                    </View>
-                    <Text style={[styles.rowLabel, { color: '#FF453A' }]}>Factory Reset App</Text>
-                </View>
-            </TouchableOpacity>
-        </View>
+        {/* ACTIONS */}
+        <TouchableOpacity style={styles.saveBtn} onPress={saveSettings}>
+            <Text style={styles.saveText}>SAVE CONFIGURATION</Text>
+        </TouchableOpacity>
 
-        <View style={styles.footer}>
-            <Text style={styles.footerText}>HYROX ENGINEER v2.2</Text>
-        </View>
+        <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
+            <Text style={styles.resetText}>FACTORY RESET APP</Text>
+        </TouchableOpacity>
+
         <View style={{height: 100}} />
       </ScrollView>
     </View>
@@ -188,32 +176,33 @@ export default function Settings() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  header: { paddingHorizontal: 25, paddingBottom: 20, backgroundColor: '#000' },
-  title: { color: '#fff', fontSize: 34, fontWeight: '900', fontStyle: 'italic', letterSpacing: -1 },
-  subtitle: { color: '#666', fontSize: 11, fontWeight: 'bold', letterSpacing: 2, marginTop: 4 },
-  
+  header: { paddingHorizontal: 25, paddingBottom: 25, borderBottomWidth: 1, borderBottomColor: '#222', backgroundColor: '#000' },
+  title: { color: '#fff', fontSize: 28, fontWeight: '900', fontStyle: 'italic', letterSpacing: -1 },
   scroll: { padding: 20 },
-
-  sectionTitle: { color: '#666', fontSize: 11, fontWeight: '900', marginBottom: 10, marginLeft: 10, letterSpacing: 1 },
-  section: { backgroundColor: '#1E1E1E', borderRadius: 16, overflow: 'hidden', marginBottom: 25, borderWidth: 1, borderColor: '#222' },
   
-  // Grid for Categories
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, padding: 15 },
-  option: { width: '48%', padding: 15, borderRadius: 8, borderWidth: 1, borderColor: '#333', alignItems: 'center', backgroundColor: '#121212' },
-  active: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
-  optionText: { color: '#888', fontWeight: 'bold', fontSize: 11 },
-  activeText: { color: '#000' },
-
-  // Standard Rows
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16 },
-  rowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  iconBox: { width: 30, height: 30, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
-  rowLabel: { color: '#fff', fontSize: 14, fontWeight: '600' },
-  rowRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowStatus: { color: '#666', fontSize: 12 },
+  section: { marginBottom: 30, backgroundColor: '#121212', padding: 20, borderRadius: 20, borderWidth: 1, borderColor: '#222' },
+  sectionTitle: { color: '#666', fontSize: 10, fontWeight: '900', letterSpacing: 1, marginBottom: 15 },
   
-  divider: { height: 1, backgroundColor: '#2A2A2A', marginLeft: 58 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  label: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+  input: { color: '#FFD700', fontSize: 18, fontWeight: '900', textAlign: 'right', minWidth: 100 },
+  
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  catBtn: { width: '48%', backgroundColor: '#1A1A1A', padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
+  catBtnActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
+  catText: { color: '#888', fontSize: 11, fontWeight: '900' },
 
-  footer: { alignItems: 'center', marginTop: 10 },
-  footerText: { color: '#333', fontSize: 10, fontWeight: 'bold' }
+  // LINK ROWS (NEW)
+  linkRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
+  iconBox: { width: 32, height: 32, borderRadius: 8, backgroundColor: 'rgba(0, 122, 255, 0.15)', justifyContent: 'center', alignItems: 'center' },
+  linkLabel: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+
+  switchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#222' },
+  switchLabel: { color: '#ccc', fontSize: 12, fontWeight: 'bold' },
+
+  saveBtn: { backgroundColor: '#FFD700', padding: 20, borderRadius: 15, alignItems: 'center', marginBottom: 15 },
+  saveText: { color: '#000', fontSize: 14, fontWeight: '900', letterSpacing: 1 },
+  
+  resetBtn: { padding: 15, alignItems: 'center' },
+  resetText: { color: '#FF453A', fontSize: 10, fontWeight: '900' },
 });
