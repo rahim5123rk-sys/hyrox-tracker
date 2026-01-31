@@ -19,54 +19,22 @@ const WEIGHTS_DB: any = {
 
 // --- CALIBRATED WEIGHTS (REALISTIC HYROX SPLITS) ---
 const BASE_STATIONS = [
-  // RUN 1 (Fresh) - Usually the fastest
   { name: '1km RUN', type: 'run', weight: 1.0, key: 'run', icon: 'walk-outline' },
-  
-  // SKI (1000m) - Similar to run time, often slightly faster
   { name: 'SKI ERG', type: 'station', weight: 0.95, key: 'ski', details: '1000m', icon: 'snow-outline' },
-  
-  // RUN 2
   { name: '1km RUN', type: 'run', weight: 1.02, key: 'run', icon: 'walk-outline' },
-  
-  // SLED PUSH - Usually FASTER than a run (high intensity, short duration)
   { name: 'SLED PUSH', type: 'station', weight: 0.7, key: 'sledPush', icon: 'push-outline' },
-  
-  // RUN 3 (Post-Sled legs start here)
   { name: '1km RUN', type: 'run', weight: 1.05, key: 'run', icon: 'walk-outline' },
-  
-  // SLED PULL - Slower than push, similar to run time
   { name: 'SLED PULL', type: 'station', weight: 0.9, key: 'sledPull', icon: 'arrow-down-outline' },
-  
-  // RUN 4
   { name: '1km RUN', type: 'run', weight: 1.08, key: 'run', icon: 'walk-outline' },
-  
-  // BURPEES - The long grind. Slower than run.
   { name: 'BURPEES', type: 'station', weight: 1.2, key: 'burpee', details: '80m Broad Jump', icon: 'fitness-outline' },
-  
-  // RUN 5
   { name: '1km RUN', type: 'run', weight: 1.1, key: 'run', icon: 'walk-outline' },
-  
-  // ROW - 1000m row is consistent, similar to Ski but under fatigue
   { name: 'ROWING', type: 'station', weight: 1.0, key: 'row', details: '1000m', icon: 'boat-outline' },
-  
-  // RUN 6
   { name: '1km RUN', type: 'run', weight: 1.12, key: 'run', icon: 'walk-outline' },
-  
-  // FARMERS - Very fast station.
   { name: 'FARMERS', type: 'station', weight: 0.5, key: 'farmers', details: '200m Carry', icon: 'barbell-outline' },
-  
-  // RUN 7
   { name: '1km RUN', type: 'run', weight: 1.15, key: 'run', icon: 'walk-outline' },
-  
-  // LUNGES - The time killer. Much slower than run.
   { name: 'LUNGES', type: 'station', weight: 1.4, key: 'lunge', icon: 'footsteps-outline' },
-  
-  // RUN 8 (The "Roxzone" effect + fatigue)
   { name: '1km RUN', type: 'run', weight: 1.18, key: 'run', icon: 'walk-outline' },
-  
-  // WALL BALLS - Fast turnover but high volume
   { name: 'WALL BALLS', type: 'station', weight: 0.9, key: 'wallBall', icon: 'basketball-outline' },
-  
   { name: 'FINISH', type: 'finish', weight: 0, key: 'finish', icon: 'flag-outline' },
 ];
 
@@ -168,7 +136,16 @@ export default function Race() {
         speakText("Race Finished. Well done.");
 
         const raceDate = new Date().toLocaleDateString();
-        const raceResult = { date: raceDate, totalTime: formatTime(totalTime), splits: newHistory };
+        
+        // ✅ FIXED SAVING LOGIC HERE
+        const raceResult = { 
+            date: raceDate, 
+            totalTime: formatTime(totalTime), 
+            splits: newHistory,
+            type: 'SIMULATION', // Critical for History Filter
+            title: 'HYROX SIMULATION',
+            name: 'HYROX SIMULATION'
+        };
         
         AsyncStorage.getItem('raceHistory').then(existing => {
             const oldHistory = existing ? JSON.parse(existing) : [];
@@ -198,7 +175,6 @@ export default function Race() {
     setHistory(prev => prev.slice(0, -1));
   };
 
-  // --- PACER LOGIC ---
   const getPacerStatus = () => {
       const totalTargetSoFar = history.reduce((acc, item) => acc + item.target, 0);
       const totalActualSoFar = history.reduce((acc, item) => acc + item.actual, 0);
@@ -313,31 +289,23 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingBottom: 15 },
   iconBtn: { padding: 10 },
-  
   miniTimer: { alignItems: 'center' },
   miniLabel: { color: '#666', fontSize: 10, fontWeight: 'bold', letterSpacing: 1 },
   miniValue: { color: '#fff', fontSize: 18, fontWeight: 'bold', fontVariant: ['tabular-nums'] },
-
   progressTrack: { flexDirection: 'row', height: 4, marginHorizontal: 20, gap: 4, marginBottom: 40 },
   progressSegment: { flex: 1, borderRadius: 2 },
-
   mainContent: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20, marginTop: -60 },
   stationLabel: { color: '#666', fontSize: 12, fontWeight: '900', letterSpacing: 2, marginBottom: 10 },
   stationTitle: { fontSize: 46, fontWeight: '900', textAlign: 'center', lineHeight: 50, marginBottom: 15 },
-  
   detailPill: { backgroundColor: '#222', paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, marginBottom: 30, borderWidth: 1, borderColor: '#333' },
   detailText: { color: '#ccc', fontWeight: 'bold', fontSize: 16 },
-
   mainTimer: { fontSize: 110, fontWeight: 'bold', fontFamily: 'Courier', letterSpacing: -5, marginBottom: 5 },
-  
   pacerBadge: { paddingHorizontal: 15, paddingVertical: 8, borderRadius: 12, marginBottom: 10 },
   pacerText: { fontWeight: 'bold', fontSize: 14, letterSpacing: 0.5 },
   smartModeText: { color: '#666', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-
   footer: { flexDirection: 'row', paddingHorizontal: 25, gap: 15, alignItems: 'flex-end' },
   undoBtn: { backgroundColor: '#1A1A1A', width: 80, height: 80, borderRadius: 20, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#333' },
   undoText: { color: '#666', fontSize: 10, fontWeight: 'bold', marginTop: 4 },
-  
   actionBtn: { height: 80, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
   actionBtnText: { fontSize: 22, fontWeight: '900', letterSpacing: 1 },
 });

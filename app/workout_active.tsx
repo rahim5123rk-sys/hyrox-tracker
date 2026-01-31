@@ -10,30 +10,24 @@ export default function WorkoutActive() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
-  // --- INITIAL SETUP ---
   const [sessionTitle, setSessionTitle] = useState("");
 
-  // CRITICAL FIX: Robust parsing for steps and rounds to prevent "no datamap" crash
   const initialSteps = params.steps 
     ? (typeof params.steps === 'string' ? JSON.parse(params.steps) : ["Warmup", "Work", "Rest"]) 
     : ["Warmup", "Work", "Rest"];
 
-  // CRITICAL FIX: Convert rounds to string safely before matching, handling both numbers and strings
   const totalRounds = params.rounds 
     ? parseInt(String(params.rounds).match(/\d+/)?.[0] || "1") 
     : 1;
 
-  // --- STATE ---
   const [activeSteps, setActiveSteps] = useState<string[]>(Array.isArray(initialSteps) ? initialSteps : ["Work", "Rest"]);
   const [currentRound, setCurrentRound] = useState(1);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   
-  // LOGGING STATE
   const [roundSplits, setRoundSplits] = useState<number[]>([]);
   const [lastRoundTime, setLastRoundTime] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
   
-  // TIMERS
   const [totalSeconds, setTotalSeconds] = useState(0);
   const [stepSeconds, setStepSeconds] = useState(0); 
   const [isActive, setIsActive] = useState(true);
@@ -63,7 +57,6 @@ export default function WorkoutActive() {
       setStepSeconds(0); 
       scrollViewRef.current?.scrollTo({ y: (currentStepIdx + 1) * 80, animated: true });
     } else {
-      // --- ROUND COMPLETE ---
       const currentSplit = totalSeconds - lastRoundTime;
       const updatedSplits = [...roundSplits, currentSplit];
       setRoundSplits(updatedSplits);
@@ -102,18 +95,21 @@ export default function WorkoutActive() {
             target: 0
         }));
 
+        // ✅ FIXED SAVING LOGIC HERE
         const newLog = {
             date: new Date().toLocaleDateString(),
             totalTime: formatTime(totalSeconds),
+            title: params.title || sessionTitle, 
             name: params.title || sessionTitle, 
-            splits: formattedSplits
+            splits: formattedSplits,
+            type: 'WORKOUT',          // This tag allows History to classify it as LAB
+            sessionType: 'TRAINING'
         };
 
         const existingLogs = await AsyncStorage.getItem('raceHistory');
         const history = existingLogs ? JSON.parse(existingLogs) : [];
         await AsyncStorage.setItem('raceHistory', JSON.stringify([newLog, ...history]));
         
-        // AUTO-SYNC TO PLANNER
         await syncToPlanner(params.title || sessionTitle, 100);
 
     } catch (error) {
