@@ -429,7 +429,7 @@ export const UPCOMING_RACES: RaceEvent[] = [
     isoDate: '2026-02-07', 
     type: 'INTL', 
     venue: 'Expo Guadalajara',
-    url: 'https://hyrox.com/event/hyrox-guadalajara/'
+    url: 'https://hyrox.com/event/smart-fit-hyrox-guadalajra/'
   },
   { 
     id: 'mty_26', 
@@ -439,7 +439,7 @@ export const UPCOMING_RACES: RaceEvent[] = [
     isoDate: '2026-04-18', 
     type: 'INTL', 
     venue: 'Cintermex',
-    url: 'https://hyrox.com/event/hyrox-monterrey/'
+    url: 'https://hyrox.com/event/smart-fit-hyrox-monterrey/'
   },
   { 
     id: 'pbc_26', 

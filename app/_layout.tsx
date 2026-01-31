@@ -37,6 +37,8 @@ export default function RootLayout() {
           }} 
         />
         
+
+      
         <Stack.Screen 
           name="workout_active" 
           options={{ 
