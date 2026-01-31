@@ -24,13 +24,11 @@ export default function WorkoutActive() {
   const [currentRound, setCurrentRound] = useState(1);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   
-  const [roundSplits, setRoundSplits] = useState<number[]>([]);
-  const [lastRoundTime, setLastRoundTime] = useState(0);
-  const [showSummary, setShowSummary] = useState(false);
-  
+  const [detailedSplits, setDetailedSplits] = useState<{name: string, time: number}[]>([]); 
   const [totalSeconds, setTotalSeconds] = useState(0);
   const [stepSeconds, setStepSeconds] = useState(0); 
   const [isActive, setIsActive] = useState(true);
+  const [showSummary, setShowSummary] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -52,16 +50,17 @@ export default function WorkoutActive() {
   const handleNext = () => {
     Vibration.vibrate(50); 
     
+    const currentStepName = activeSteps[currentStepIdx];
+    const logName = `${currentStepName} (R${currentRound})`; 
+    
+    const newSplit = { name: logName, time: stepSeconds };
+    setDetailedSplits(prev => [...prev, newSplit]);
+
     if (currentStepIdx < activeSteps.length - 1) {
       setCurrentStepIdx(prev => prev + 1);
       setStepSeconds(0); 
       scrollViewRef.current?.scrollTo({ y: (currentStepIdx + 1) * 80, animated: true });
     } else {
-      const currentSplit = totalSeconds - lastRoundTime;
-      const updatedSplits = [...roundSplits, currentSplit];
-      setRoundSplits(updatedSplits);
-      setLastRoundTime(totalSeconds);
-
       if (currentRound < totalRounds) {
         setCurrentRound(prev => prev + 1);
         setCurrentStepIdx(0);
@@ -70,40 +69,50 @@ export default function WorkoutActive() {
         Vibration.vibrate([0, 100, 50, 100]); 
         scrollViewRef.current?.scrollTo({ y: 0, animated: true });
       } else {
-        finishWorkout(updatedSplits);
+        finishWorkout([...detailedSplits, newSplit]); 
       }
     }
   };
 
   const handleAddSet = () => {
+    const currentStepName = activeSteps[currentStepIdx];
+    
+    if (currentStepName.toUpperCase().includes('REST')) {
+        Vibration.vibrate(50);
+        Alert.alert("RECOVERY MODE", "Cannot add sets during a rest period.");
+        return;
+    }
+
     const newSteps = [...activeSteps];
     newSteps.splice(currentStepIdx + 1, 0, `${activeSteps[currentStepIdx]} (EXTRA)`);
     setActiveSteps(newSteps);
     Vibration.vibrate(20);
-    Alert.alert("EXTRA SET ADDED", "One additional set added to this round.");
+    Alert.alert("TACTICAL UPDATE", "Extra set added.");
   };
 
-  const finishWorkout = async (finalSplits: number[]) => {
+  const finishWorkout = async (finalSplits: {name: string, time: number}[]) => {
     setIsActive(false);
-    setShowSummary(true); 
+    setShowSummary(true);
     Vibration.vibrate(1000);
 
+    const completionTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
     try {
-        const formattedSplits = finalSplits.map((time, index) => ({
-            name: `ROUND ${index + 1}`,
-            actual: time,
-            target: 0
+        const formattedSplits = finalSplits.map((item) => ({
+            name: item.name,   
+            actual: item.time,
+            target: 0          
         }));
 
-        // ✅ FIXED SAVING LOGIC HERE
         const newLog = {
             date: new Date().toLocaleDateString(),
+            completedAt: completionTime, // <--- NEW FIELD
             totalTime: formatTime(totalSeconds),
             title: params.title || sessionTitle, 
             name: params.title || sessionTitle, 
             splits: formattedSplits,
-            type: 'WORKOUT',          // This tag allows History to classify it as LAB
-            sessionType: 'TRAINING'
+            type: 'WORKOUT',           
+            sessionType: 'TRAINING',   
         };
 
         const existingLogs = await AsyncStorage.getItem('raceHistory');
@@ -111,7 +120,6 @@ export default function WorkoutActive() {
         await AsyncStorage.setItem('raceHistory', JSON.stringify([newLog, ...history]));
         
         await syncToPlanner(params.title || sessionTitle, 100);
-
     } catch (error) {
         console.error("Failed to save workout:", error);
     }
@@ -154,36 +162,38 @@ export default function WorkoutActive() {
   if (showSummary) {
     return (
       <View style={[styles.container, { paddingTop: insets.top + 20 }]}>
-        <Text style={styles.summaryHeader}>SESSION COMPLETE</Text>
-        <Text style={styles.totalTimeLarge}>{formatTime(totalSeconds)}</Text>
-        <Text style={styles.subLabel}>TOTAL WORK TIME</Text>
+        <StatusBar barStyle="light-content" />
+        <View style={{alignItems:'center', marginTop: 20}}>
+            <Ionicons name="checkmark-circle" size={64} color="#FFD700" />
+            <Text style={styles.summaryHeader}>MISSION COMPLETE</Text>
+            <Text style={styles.totalTimeLarge}>{formatTime(totalSeconds)}</Text>
+            <Text style={styles.subLabel}>TOTAL ACTIVE TIME</Text>
+        </View>
 
-        <View style={styles.statsGrid}>
+        <View style={styles.summaryStats}>
             <View style={styles.statBox}>
-                <Text style={styles.statLabel}>ROUNDS</Text>
-                <Text style={styles.statValue}>{totalRounds}</Text>
+                <Text style={styles.statLabel}>SETS</Text>
+                <Text style={styles.statValue}>{detailedSplits.length}</Text>
             </View>
             <View style={styles.statBox}>
-                <Text style={styles.statLabel}>FASTEST</Text>
-                <Text style={styles.statValue}>{roundSplits.length > 0 ? formatTime(Math.min(...roundSplits)) : "--:--"}</Text>
-            </View>
-            <View style={styles.statBox}>
-                <Text style={styles.statLabel}>AVG LAP</Text>
-                <Text style={styles.statValue}>{roundSplits.length > 0 ? formatTime(Math.round(totalSeconds / roundSplits.length)) : "--:--"}</Text>
+                <Text style={styles.statLabel}>AVG SPLIT</Text>
+                <Text style={styles.statValue}>
+                    {detailedSplits.length > 0 ? formatTime(Math.round(totalSeconds / detailedSplits.length)) : "--:--"}
+                </Text>
             </View>
         </View>
 
-        <ScrollView style={{flex: 1, width: '100%'}} contentContainerStyle={{paddingBottom: 40}}>
-            {roundSplits.map((split, i) => (
+        <ScrollView style={{flex: 1, width: '100%', marginTop: 20}} contentContainerStyle={{paddingBottom: 40}}>
+            {detailedSplits.map((split, i) => (
               <View key={i} style={styles.splitRow}>
-                <Text style={styles.splitIndex}>ROUND {i + 1}</Text>
-                <Text style={styles.splitValue}>{formatTime(split)}</Text>
+                <Text style={styles.splitIndex}>{split.name.replace(/\(R\d+\)/, '')}</Text>
+                <Text style={styles.splitValue}>{formatTime(split.time)}</Text>
               </View>
             ))}
         </ScrollView>
 
         <TouchableOpacity style={styles.saveBtn} onPress={() => { router.dismissAll(); router.replace('/'); }}>
-          <Text style={styles.saveBtnText}>RETURN TO BASE</Text>
+          <Text style={styles.saveBtnText}>CONFIRM & EXIT</Text>
         </TouchableOpacity>
       </View>
     );
@@ -289,16 +299,17 @@ const styles = StyleSheet.create({
   addSetText: { color: '#fff', fontSize: 9, fontWeight: 'bold', marginTop: 2 },
   nextBtn: { flex: 0.7, backgroundColor: '#FFD700', borderRadius: 16, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, paddingVertical: 15 },
   nextBtnText: { color: '#000', fontSize: 16, fontWeight: '900' },
-  summaryHeader: { color: '#fff', fontSize: 18, fontWeight: '900', textAlign: 'center', marginBottom: 10, letterSpacing: 1 },
-  totalTimeLarge: { color: '#FFD700', fontSize: 60, fontWeight: 'bold', textAlign: 'center', fontFamily: 'Courier' },
-  subLabel: { color: '#444', fontSize: 10, fontWeight: '900', textAlign: 'center', marginBottom: 30 },
-  statsGrid: { flexDirection: 'row', gap: 10, marginBottom: 30 },
-  statBox: { flex: 1, backgroundColor: '#111', padding: 15, borderRadius: 12, alignItems: 'center' },
-  statLabel: { color: '#666', fontSize: 9, fontWeight: '900', marginBottom: 5 },
-  statValue: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  splitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#222' },
-  splitIndex: { color: '#888', fontWeight: 'bold' },
-  splitValue: { color: '#fff', fontWeight: 'bold', fontFamily: 'Courier' },
-  saveBtn: { backgroundColor: '#333', height: 60, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
-  saveBtnText: { color: '#fff', fontWeight: '900', fontSize: 16 },
+  
+  summaryHeader: { color: '#fff', fontSize: 24, fontWeight: '900', marginTop: 15, letterSpacing: 1 },
+  totalTimeLarge: { color: '#FFD700', fontSize: 60, fontWeight: 'bold', marginVertical: 10, fontVariant: ['tabular-nums'] },
+  subLabel: { color: '#666', fontSize: 10, fontWeight: '900', letterSpacing: 2 },
+  summaryStats: { flexDirection: 'row', gap: 15, marginTop: 30 },
+  statBox: { flex: 1, backgroundColor: '#111', padding: 20, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  statLabel: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 5 },
+  statValue: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  splitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
+  splitIndex: { color: '#ccc', fontSize: 14, fontWeight: '500' },
+  splitValue: { color: '#fff', fontSize: 14, fontWeight: 'bold', fontFamily: 'Courier' },
+  saveBtn: { backgroundColor: '#FFD700', height: 60, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
+  saveBtnText: { color: '#000', fontSize: 16, fontWeight: '900' },
 });

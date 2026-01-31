@@ -33,14 +33,14 @@ const STRATEGY_VIDEOS: any = {
 };
 
 const PACER_DESCRIPTIONS: any = {
-    MANUAL: "Traditional Mode: You guess your total finish time.",
-    SMART: "Coaching Mode: Enter your fresh 5k time."
+    MANUAL: "Standard Command. Input your target goal (e.g., 90 mins) to generate pacing splits.",
+    SMART: "AI Deployment. Input your 5k Run Time. The system will calculate your optimal race pace."
 };
 
 const BIAS_DESCRIPTIONS: any = {
-    RUNNER: "Strategy: Aggressive running splits.",
-    BALANCED: "Strategy: Equal effort distribution.",
-    LIFTER: "Strategy: Fast station times."
+    RUNNER: "Speed Specialist. Generates aggressive running splits to buy time for heavy stations.",
+    BALANCED: "Hybrid Operator. Distributes effort equally between running and functional stations.",
+    LIFTER: "Strength Specialist. Prioritizes fast station times to compensate for a steady run pace."
 };
 
 const RUN_TYPES = ['EASY (Z2)', 'TEMPO', 'INTERVALS', 'LONG RUN'];
@@ -69,11 +69,16 @@ export default function Home() {
   // LOG STATE
   const [showLogModal, setShowLogModal] = useState(false);
   const [logType, setLogType] = useState<'RUN' | 'STATION' | 'WORKOUT'>('RUN');
-  const [logTime, setLogTime] = useState('');
-  const [logUnit, setLogUnit] = useState<'MINS' | 'REPS'>('MINS'); // ✅ NEW UNIT STATE
-  const [logNote, setLogNote] = useState('');
+  
+  // SPECIFIC INPUTS
+  const [logMinutes, setLogMinutes] = useState('');
+  const [logSeconds, setLogSeconds] = useState('');
+  const [logReps, setLogReps] = useState('');
   const [logDistance, setLogDistance] = useState('');
   const [logWeight, setLogWeight] = useState('');
+  const [logRPE, setLogRPE] = useState(5); // 1-10
+  
+  const [logNote, setLogNote] = useState('');
   const [logSubCategory, setLogSubCategory] = useState('');
   const [modalRegion, setModalRegion] = useState<Region>('ALL');
 
@@ -128,53 +133,56 @@ export default function Home() {
   };
 
   const openQuickLog = (type: 'RUN' | 'STATION' | 'WORKOUT') => {
-      setLogType(type); setLogTime(''); setLogNote(''); setLogDistance(''); setLogWeight(''); setLogSubCategory(''); 
-      setLogUnit('MINS'); // Default to Time
+      setLogType(type);
+      setLogMinutes(''); setLogSeconds(''); setLogReps('');
+      setLogNote(''); setLogDistance(''); setLogWeight(''); setLogSubCategory(''); 
+      setLogRPE(5);
       setShowLogModal(true);
   };
 
   const saveQuickLog = async () => {
-      if (!logTime) { Alert.alert("Missing Info", "Please enter a time or score."); return; }
-      
-      let finalNote = logNote;
-      if (logType === 'RUN') {
-          const t = logSubCategory || 'RUN';
-          const d = logDistance ? `${logDistance}km` : '';
-          finalNote = `${d} ${t} • ${logNote}`.trim();
-      } else if (logType === 'STATION') {
-          const t = logSubCategory || 'STATION';
-          const w = logWeight ? `@ ${logWeight}kg` : '';
-          finalNote = `${t} ${w} • ${logNote}`.trim();
-      } else {
-          finalNote = `${logSubCategory || 'GYM'} • ${logNote}`.trim();
+      // 1. CONSTRUCT TIME STRING
+      let finalTime = '';
+      if (logMinutes || logSeconds) {
+          const m = parseInt(logMinutes) || 0;
+          const s = parseInt(logSeconds) || 0;
+          finalTime = `${m}:${s < 10 ? '0' : ''}${s}`;
       }
 
+      // 2. CONSTRUCT TITLE
+      let logTitle = '';
+      if (logType === 'RUN') logTitle = `${logDistance || '?'}km ${logSubCategory || 'RUN'}`;
+      else if (logType === 'STATION') logTitle = `${logSubCategory || 'STATION'}`;
+      else logTitle = `${logSubCategory || 'GYM'} SESSION`;
+
       const timestamp = new Date().toLocaleDateString();
+      const completedAt = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
       try {
-          // 1. History
           const newHistoryLog = { 
-              date: timestamp, 
-              totalTime: logTime, 
-              unit: logUnit, // ✅ Save Unit
-              splits: [], 
+              date: timestamp,
+              completedAt: completedAt,
+              totalTime: finalTime || '--:--', // Can be empty if just reps
               type: logType, 
-              note: finalNote 
+              sessionType: 'QUICK LOG', 
+              title: logTitle.toUpperCase(),
+              
+              // DETAILS PAYLOAD
+              details: {
+                  subCategory: logSubCategory,
+                  distance: logDistance,
+                  weight: logWeight,
+                  reps: logReps,
+                  rpe: logRPE,
+                  note: logNote
+              }
           };
+
           const existing = await AsyncStorage.getItem('raceHistory');
           const history = existing ? JSON.parse(existing) : [];
           await AsyncStorage.setItem('raceHistory', JSON.stringify([newHistoryLog, ...history]));
           
-          // 2. Stats
-          const statsJson = await AsyncStorage.getItem('user_history_stats');
-          const stats = statsJson ? JSON.parse(statsJson) : { xp: 0, workouts: 0, run: 0, sled: 0 };
-          stats.workouts += 1; stats.xp += 150;
-          if (logType === 'RUN' && logDistance) stats.run += parseFloat(logDistance);
-          else if (logType === 'RUN') stats.run += 5;
-          if (logType === 'STATION') stats.sled += 50;
-          await AsyncStorage.setItem('user_history_stats', JSON.stringify(stats));
-
-          // 3. Planner
+          // PLANNER SYNC
           const planJson = await AsyncStorage.getItem('user_weekly_plan');
           if (planJson) {
               const plan = JSON.parse(planJson);
@@ -183,13 +191,9 @@ export default function Home() {
                   if (!plan[todayIndex].workouts) plan[todayIndex].workouts = [];
                   plan[todayIndex].workouts.push({
                       id: `manual-${Date.now()}`,
-                      title: `${logType} SESSION`,
+                      title: logTitle.toUpperCase(),
                       sessionType: 'QUICK LOG',
-                      timestamp: new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}),
-                      result: logTime, // ✅ Save Result
-                      unit: logUnit,   // ✅ Save Unit
-                      note: finalNote,
-                      type: logType,
+                      timestamp: completedAt,
                       complete: true,
                       xp: 150
                   });
@@ -201,18 +205,12 @@ export default function Home() {
           }
           
           setShowLogModal(false);
-          Alert.alert("Log Saved", "Session synced to Planner & History.");
+          Alert.alert("LOG SECURED", "Mission data recorded successfully.");
       } catch (e) { console.log(e); }
   };
 
-  const getDaysOut = () => {
-      if (!currentEvent) return 0;
-      const today = new Date(); const raceDay = new Date(currentEvent.isoDate);
-      const diff = raceDay.getTime() - today.getTime();
-      return Math.max(0, Math.ceil(diff / (1000 * 3600 * 24)));
-  };
-
   const filteredRaces = modalRegion === 'ALL' ? UPCOMING_RACES : UPCOMING_RACES.filter(r => r.region === modalRegion);
+  const getDaysOut = () => { if (!currentEvent) return 0; const t = new Date(); const r = new Date(currentEvent.isoDate); return Math.max(0, Math.ceil((r.getTime()-t.getTime())/(1000*3600*24))); };
 
   if (isLoading) return <View style={{flex:1, backgroundColor:'#000'}} />;
 
@@ -268,6 +266,7 @@ export default function Home() {
                 {calcMode === 'MANUAL' ? (<><Text style={styles.inputLabel}>GOAL FINISH TIME</Text><View style={styles.inputWrapper}><TextInput style={styles.mainInput} value={targetTime} onChangeText={setTargetTime} keyboardType="numeric" maxLength={3} /><Text style={styles.inputUnit}>MINS</Text></View></>) : (<><Text style={styles.inputLabel}>FRESH 5K TIME (MM:SS)</Text><View style={styles.inputWrapper}><TextInput style={styles.mainInput} value={fiveKTime} onChangeText={setFiveKTime} keyboardType="numbers-and-punctuation" placeholder="20:00" placeholderTextColor="#333" maxLength={5} /></View><View style={{flexDirection: 'row', gap: 8, marginBottom: 20, flexWrap: 'wrap'}}>{Object.keys(CATEGORIES).map((cat) => (<TouchableOpacity key={cat} style={[styles.catChip, category === cat && styles.catChipActive]} onPress={() => setCategory(cat)}><Text style={[styles.catText, category === cat && {color: '#000'}]}>{CATEGORIES[cat as keyof typeof CATEGORIES].label}</Text></TouchableOpacity>))}</View></>)}
                 <Text style={[styles.inputLabel, {marginBottom: 10}]}>ATHLETE BIAS</Text>
                 <View style={styles.typeGrid}>{['RUNNER', 'BALANCED', 'LIFTER'].map((type) => (<TouchableOpacity key={type} style={[styles.typeBtn, athleteType === type && styles.activeTypeBtn]} onPress={() => setAthleteType(type)}><Text style={[styles.typeBtnText, athleteType === type && { color: '#000' }]}>{type}</Text></TouchableOpacity>))}</View>
+                <View style={[styles.infoBox, {marginTop: 15, borderRadius: 8}]}><Text style={styles.infoText}>{BIAS_DESCRIPTIONS[athleteType]}</Text></View>
             </View>
             <TouchableOpacity activeOpacity={0.9} style={styles.consoleBottom} onPress={handleLaunch}>
                 <VideoView player={player} style={StyleSheet.absoluteFill} contentFit="cover" nativeControls={false} />
@@ -275,52 +274,88 @@ export default function Home() {
                 <View style={styles.btnContent}><Text style={styles.actionText}>{calcMode === 'SMART' ? 'CALCULATE & LAUNCH' : 'LAUNCH CALCULATOR'}</Text></View>
             </TouchableOpacity>
         </View>
-        <TouchableOpacity style={{ marginVertical: 40, alignSelf: 'center', padding: 15 }} onPress={async () => { await AsyncStorage.clear(); router.replace('/onboarding'); }}><Text style={{ color: '#333', fontWeight: '900', fontSize: 10 }}>FACTORY RESET</Text></TouchableOpacity>
       </Animated.ScrollView>
 
       <Modal visible={isEventListOpen} animationType="slide" transparent={true} onRequestClose={() => setEventListOpen(false)}>
-        <BlurView intensity={90} tint="dark" style={styles.modalContainer}>
-            <View style={styles.modalContent}>
-                <View style={styles.modalHeaderRow}><Text style={styles.modalTitle}>SELECT DEPLOYMENT</Text><TouchableOpacity onPress={() => setEventListOpen(false)} style={styles.closeBtn}><Ionicons name="close" size={24} color="#fff" /></TouchableOpacity></View>
-                <View style={{ height: 40, marginBottom: 15 }}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>{['ALL', 'UK', 'EUROPE', 'USA', 'APAC', 'LATAM'].map((region) => (<TouchableOpacity key={region} style={[styles.regionChip, modalRegion === region && styles.regionChipActive]} onPress={() => setModalRegion(region as Region)}><Text style={[styles.regionText, modalRegion === region && {color: '#000'}]}>{region}</Text></TouchableOpacity>))}</ScrollView></View>
-                <ScrollView showsVerticalScrollIndicator={false}>
-                    {filteredRaces.map((event) => { const originalIndex = UPCOMING_RACES.findIndex(r => r.id === event.id); return (<TouchableOpacity key={event.id} style={styles.eventOption} onPress={() => { setSelectedEventIndex(originalIndex); setEventListOpen(false); }}><View><Text style={styles.optionCity}>{event.city}</Text><Text style={{color:'#666', fontSize:12, fontWeight:'bold'}}>{event.date}</Text></View>{selectedEventIndex === originalIndex && <Ionicons name="checkmark-circle" size={20} color="#FFD700" />}</TouchableOpacity>); })}
-                    <View style={{height: 40}} />
-                </ScrollView>
-            </View>
-        </BlurView>
+        <BlurView intensity={90} tint="dark" style={styles.modalContainer}><View style={styles.modalContent}><View style={styles.modalHeaderRow}><Text style={styles.modalTitle}>SELECT DEPLOYMENT</Text><TouchableOpacity onPress={() => setEventListOpen(false)} style={styles.closeBtn}><Ionicons name="close" size={24} color="#fff" /></TouchableOpacity></View><View style={{ height: 40, marginBottom: 15 }}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>{['ALL', 'UK', 'EUROPE', 'USA', 'APAC', 'LATAM'].map((region) => (<TouchableOpacity key={region} style={[styles.regionChip, modalRegion === region && styles.regionChipActive]} onPress={() => setModalRegion(region as Region)}><Text style={[styles.regionText, modalRegion === region && {color: '#000'}]}>{region}</Text></TouchableOpacity>))}</ScrollView></View><ScrollView showsVerticalScrollIndicator={false}>{filteredRaces.map((event) => { const originalIndex = UPCOMING_RACES.findIndex(r => r.id === event.id); return (<TouchableOpacity key={event.id} style={styles.eventOption} onPress={() => { setSelectedEventIndex(originalIndex); setEventListOpen(false); }}><View><Text style={styles.optionCity}>{event.city}</Text><Text style={{color:'#666', fontSize:12, fontWeight:'bold'}}>{event.date}</Text></View>{selectedEventIndex === originalIndex && <Ionicons name="checkmark-circle" size={20} color="#FFD700" />}</TouchableOpacity>); })}<View style={{height: 40}} /></ScrollView></View></BlurView>
       </Modal>
 
       <Modal visible={showLogModal} animationType="slide" transparent>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <BlurView intensity={90} tint="dark" style={styles.modalContainer}>
-            <View style={[styles.modalContent, {height: '75%'}]}>
+            <View style={[styles.modalContent, {height: 'auto', paddingBottom: 40}]}>
                 <View style={styles.modalHeaderRow}><View style={{flexDirection: 'row', alignItems: 'center', gap: 10}}><Ionicons name={logType === 'RUN' ? 'stopwatch' : (logType === 'STATION' ? 'barbell' : 'fitness')} size={24} color="#FFD700" /><Text style={styles.modalTitle}>LOG {logType}</Text></View><TouchableOpacity onPress={() => setShowLogModal(false)}><Ionicons name="close-circle" size={30} color="#666" /></TouchableOpacity></View>
                 <ScrollView showsVerticalScrollIndicator={false}>
-                    <Text style={styles.inputLabel}>{logType === 'RUN' ? 'RUN TYPE' : (logType === 'STATION' ? 'SELECT STATION' : 'FOCUS')}</Text>
+                    
+                    {/* CATEGORY SELECTOR */}
+                    <Text style={styles.inputLabel}>{logType === 'RUN' ? 'RUN TYPE' : (logType === 'STATION' ? 'STATION' : 'FOCUS')}</Text>
                     <View style={{marginBottom: 20}}><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap: 8}}>{(logType === 'RUN' ? RUN_TYPES : (logType === 'STATION' ? STATIONS_LIST : GYM_FOCUS)).map((item) => (<TouchableOpacity key={item} style={[styles.catChip, logSubCategory === item && styles.catChipActive]} onPress={() => setLogSubCategory(item)}><Text style={[styles.catText, logSubCategory === item && {color: '#000'}]}>{item}</Text></TouchableOpacity>))}</ScrollView></View>
                     
-                    {logType === 'RUN' && (<><Text style={styles.inputLabel}>DISTANCE (KM)</Text><TextInput style={styles.modalInput} placeholder="e.g. 5.0" placeholderTextColor="#444" keyboardType="numeric" value={logDistance} onChangeText={setLogDistance} /></>)}
-                    {logType === 'STATION' && (<><Text style={styles.inputLabel}>WEIGHT (KG) - OPTIONAL</Text><TextInput style={styles.modalInput} placeholder="e.g. 152" placeholderTextColor="#444" keyboardType="numeric" value={logWeight} onChangeText={setLogWeight} /></>)}
+                    {/* --- DYNAMIC FIELDS BASED ON TYPE --- */}
                     
-                    {/* ✅ NEW: TIME VS REPS TOGGLE */}
-                    <Text style={styles.inputLabel}>RECORD TYPE</Text>
-                    <View style={{flexDirection: 'row', marginBottom: 10, gap: 10}}>
-                        <TouchableOpacity onPress={() => setLogUnit('MINS')} style={[styles.unitBtn, logUnit === 'MINS' && styles.unitBtnActive]}>
-                            <Text style={[styles.unitText, logUnit === 'MINS' && {color: '#000'}]}>TIME (MM:SS)</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => setLogUnit('REPS')} style={[styles.unitBtn, logUnit === 'REPS' && styles.unitBtnActive]}>
-                            <Text style={[styles.unitText, logUnit === 'REPS' && {color: '#000'}]}>REPS / SCORE</Text>
-                        </TouchableOpacity>
-                    </View>
+                    {/* RUN INPUTS */}
+                    {logType === 'RUN' && (
+                        <View style={{flexDirection: 'row', gap: 15, marginBottom: 15}}>
+                            <View style={{flex: 1}}>
+                                <Text style={styles.inputLabel}>DISTANCE (KM)</Text>
+                                <TextInput style={styles.modalInput} placeholder="5.0" placeholderTextColor="#444" keyboardType="numeric" value={logDistance} onChangeText={setLogDistance} />
+                            </View>
+                            <View style={{flex: 1}}>
+                                <Text style={styles.inputLabel}>TIME (MM:SS)</Text>
+                                <View style={{flexDirection:'row', gap: 5}}>
+                                    <TextInput style={[styles.modalInput, {flex: 1}]} placeholder="MM" placeholderTextColor="#444" keyboardType="number-pad" value={logMinutes} onChangeText={setLogMinutes} maxLength={3} />
+                                    <TextInput style={[styles.modalInput, {flex: 1}]} placeholder="SS" placeholderTextColor="#444" keyboardType="number-pad" value={logSeconds} onChangeText={setLogSeconds} maxLength={2} />
+                                </View>
+                            </View>
+                        </View>
+                    )}
 
-                    <Text style={styles.inputLabel}>RESULT</Text>
-                    <TextInput style={styles.modalInput} placeholder={logUnit === 'MINS' ? "25:00" : "e.g. 50"} placeholderTextColor="#444" value={logTime} onChangeText={setLogTime} />
+                    {/* STATION INPUTS */}
+                    {logType === 'STATION' && (
+                        <View>
+                            <View style={{flexDirection: 'row', gap: 15, marginBottom: 15}}>
+                                <View style={{flex: 1}}>
+                                    <Text style={styles.inputLabel}>WEIGHT (KG)</Text>
+                                    <TextInput style={styles.modalInput} placeholder="0" placeholderTextColor="#444" keyboardType="numeric" value={logWeight} onChangeText={setLogWeight} />
+                                </View>
+                                <View style={{flex: 1}}>
+                                    <Text style={styles.inputLabel}>REPS / CALS</Text>
+                                    <TextInput style={styles.modalInput} placeholder="0" placeholderTextColor="#444" keyboardType="numeric" value={logReps} onChangeText={setLogReps} />
+                                </View>
+                            </View>
+                            <Text style={styles.inputLabel}>DURATION (OPTIONAL)</Text>
+                            <View style={{flexDirection:'row', gap: 5, marginBottom: 15}}>
+                                <TextInput style={[styles.modalInput, {flex: 1}]} placeholder="MM" placeholderTextColor="#444" keyboardType="number-pad" value={logMinutes} onChangeText={setLogMinutes} maxLength={3} />
+                                <TextInput style={[styles.modalInput, {flex: 1}]} placeholder="SS" placeholderTextColor="#444" keyboardType="number-pad" value={logSeconds} onChangeText={setLogSeconds} maxLength={2} />
+                            </View>
+                        </View>
+                    )}
+
+                    {/* GYM INPUTS */}
+                    {logType === 'WORKOUT' && (
+                        <View style={{marginBottom: 15}}>
+                            <Text style={styles.inputLabel}>SESSION DURATION</Text>
+                            <View style={{flexDirection:'row', gap: 5}}>
+                                <TextInput style={[styles.modalInput, {flex: 1}]} placeholder="MM" placeholderTextColor="#444" keyboardType="number-pad" value={logMinutes} onChangeText={setLogMinutes} maxLength={3} />
+                                <TextInput style={[styles.modalInput, {flex: 1}]} placeholder="SS" placeholderTextColor="#444" keyboardType="number-pad" value={logSeconds} onChangeText={setLogSeconds} maxLength={2} />
+                            </View>
+                        </View>
+                    )}
+
+                    {/* RPE SLIDER */}
+                    <Text style={styles.inputLabel}>RPE (INTENSITY): {logRPE}/10</Text>
+                    <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20}}>
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+                            <TouchableOpacity key={num} onPress={() => setLogRPE(num)} style={[styles.rpeBox, logRPE === num && styles.rpeBoxActive]}>
+                                <Text style={[styles.rpeText, logRPE === num && {color: '#000'}]}>{num}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
                     
                     <Text style={styles.inputLabel}>NOTES</Text>
-                    <TextInput style={[styles.modalInput, {height: 80, textAlignVertical: 'top'}]} placeholder="Notes..." placeholderTextColor="#444" value={logNote} onChangeText={setLogNote} multiline />
-                    <TouchableOpacity style={styles.saveBtn} onPress={saveQuickLog}><Text style={styles.saveBtnText}>SAVE TO PLANNER & HISTORY</Text></TouchableOpacity>
-                    <View style={{height: 50}} />
+                    <TextInput style={[styles.modalInput, {height: 80, textAlignVertical: 'top'}]} placeholder="How did it feel?" placeholderTextColor="#444" value={logNote} onChangeText={setLogNote} multiline />
+                    
+                    <TouchableOpacity style={styles.saveBtn} onPress={saveQuickLog}><Text style={styles.saveBtnText}>CONFIRM ENTRY</Text></TouchableOpacity>
                 </ScrollView>
             </View>
         </BlurView>
@@ -395,7 +430,7 @@ const styles = StyleSheet.create({
   btnContent: { alignItems: 'center' },
   actionText: { color: '#fff', fontSize: 20, fontWeight: '900', fontStyle: 'italic' },
   modalContainer: { flex: 1, justifyContent: 'flex-end' },
-  modalContent: { height: '70%', backgroundColor: '#121212', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25 },
+  modalContent: { backgroundColor: '#121212', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25 },
   modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   modalTitle: { color: '#fff', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
   closeBtn: { padding: 5 },
@@ -407,7 +442,7 @@ const styles = StyleSheet.create({
   modalInput: { backgroundColor: '#111', color: '#fff', fontSize: 18, padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#333' },
   saveBtn: { backgroundColor: '#FFD700', marginTop: 30, padding: 20, borderRadius: 16, alignItems: 'center' },
   saveBtnText: { color: '#000', fontSize: 16, fontWeight: '900' },
-  unitBtn: { flex: 1, backgroundColor: '#111', padding: 12, borderRadius: 10, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
-  unitBtnActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
-  unitText: { color: '#666', fontWeight: '900', fontSize: 10 }
+  rpeBox: { width: 28, height: 28, borderRadius: 6, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  rpeBoxActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
+  rpeText: { color: '#666', fontSize: 10, fontWeight: '900' }
 });
