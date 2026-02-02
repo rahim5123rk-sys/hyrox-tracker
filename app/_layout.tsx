@@ -1,3 +1,4 @@
+import { ThemeProvider, useTheme } from '@/context/ThemeContext';
 import * as Notifications from 'expo-notifications';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -13,14 +14,15 @@ Notifications.setNotificationHandler({
   }),
 });
 
-export default function RootLayout() {
+function StackWithTheme() {
+  const { isDark, colors } = useTheme();
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <StatusBar style="light" />
+    <>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <Stack
         screenOptions={{
           headerShown: false,
-          contentStyle: { backgroundColor: '#000' }, 
+          contentStyle: { backgroundColor: colors.background },
         }}
       >
         <Stack.Screen name="(tabs)" />
@@ -43,6 +45,16 @@ export default function RootLayout() {
           options={{ presentation: 'modal', headerShown: false }} 
         />
       </Stack>
+    </>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider>
+        <StackWithTheme />
+      </ThemeProvider>
     </GestureHandlerRootView>
   );
 }
