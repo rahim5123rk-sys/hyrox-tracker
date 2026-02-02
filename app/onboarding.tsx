@@ -4,23 +4,24 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useRef, useState } from 'react';
 import {
-    Animated,
-    Dimensions,
-    FlatList,
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  Animated,
+  Dimensions,
+  FlatList,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 // IMPORT DATA
 import { RaceEvent, Region, UPCOMING_RACES } from './data/races';
+import { ALL_WORKOUTS } from './data/workouts';
 
 const { width } = Dimensions.get('window');
 
@@ -54,6 +55,16 @@ const LEVELS = [
   { id: 'ELITE', label: 'ELITE', sub: 'Competitive. 6+ sessions/week.' }
 ];
 
+const DIVISIONS = [
+    { id: 'MEN_OPEN', label: 'MEN OPEN' },
+    { id: 'WOMEN_OPEN', label: 'WOMEN OPEN' },
+    { id: 'MEN_PRO', label: 'MEN PRO' },
+    { id: 'WOMEN_PRO', label: 'WOMEN PRO' },
+    { id: 'DOUBLES_MEN', label: 'MEN DOUBLES' },
+    { id: 'DOUBLES_WOMEN', label: 'WOMEN DOUBLES' },
+    { id: 'DOUBLES_MIXED', label: 'MIXED DOUBLES' },
+];
+
 export default function Onboarding() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
@@ -61,13 +72,12 @@ export default function Onboarding() {
 
   // --- FORM STATE ---
   const [name, setName] = useState('');
+  const [category, setCategory] = useState('MEN_OPEN'); // NEW: Division State
   const [level, setLevel] = useState('INTERMEDIATE');
   
-  // Race Selection
   const [targetRace, setTargetRace] = useState<RaceEvent | null>(null);
   const [selectedRegion, setSelectedRegion] = useState<Region>('ALL');
 
-  // Strategy
   const [targetTime, setTargetTime] = useState('');
   const [athleteType, setAthleteType] = useState('BALANCED');
 
@@ -97,12 +107,41 @@ export default function Onboarding() {
     }
   };
 
-  // --- GENERATE TAILORED PLAN ---
+  // --- INTELLIGENCE: MISSION SELECTOR ---
+  const getMissionOrder = (type: string, userLevel: string) => {
+    if (type === 'Rest' || type === 'Recovery') return null;
+
+    const allowedLevels = userLevel === 'ROOKIE' 
+        ? ['BEGINNER', 'ALL LEVELS']
+        : userLevel === 'ELITE'
+        ? ['ADVANCED', 'ELITE']
+        : ['INTERMEDIATE', 'ADVANCED', 'ALL LEVELS'];
+
+    let candidates = ALL_WORKOUTS.filter(w => allowedLevels.includes(w.level));
+
+    if (type === 'Strength') {
+        candidates = candidates.filter(w => 
+            ['SLED PUSH', 'SLED PULL', 'FARMERS', 'WALL BALLS'].includes(w.station) || w.type === 'STRENGTH'
+        );
+    } else if (type === 'Hybrid' || type === 'Hyrox') {
+        candidates = candidates.filter(w => 
+            ['HYBRID', 'BURPEES', 'LUNGES'].includes(w.station) || w.type === 'SIMULATION'
+        );
+    } else if (type === 'Run') {
+        candidates = candidates.filter(w => ['ROWING', 'SKI ERG'].includes(w.station));
+    }
+
+    if (candidates.length > 0) {
+        const randomIndex = Math.floor(Math.random() * candidates.length);
+        return candidates[randomIndex].id;
+    }
+    return null;
+  };
+
   const generateWeeklyPlan = (userLevel: string) => {
     const days = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
     const fullDays = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
     
-    // TEMPLATES
     const ROOKIE_TEMPLATE = ['Rest', 'Strength', 'Rest', 'Run', 'Rest', 'Hybrid', 'Rest'];
     const INT_TEMPLATE = ['Run', 'Strength', 'Run', 'Rest', 'Hybrid', 'Hyrox', 'Rest'];
     const ELITE_TEMPLATE = ['Run', 'Strength', 'Run', 'Hybrid', 'Recovery', 'Hyrox', 'Run'];
@@ -111,19 +150,28 @@ export default function Onboarding() {
     if (userLevel === 'ROOKIE') template = ROOKIE_TEMPLATE;
     if (userLevel === 'ELITE') template = ELITE_TEMPLATE;
 
-    return days.map((d, i) => ({
-      day: d,
-      fullDay: fullDays[i],
-      type: template[i],
-      title: template[i] === 'Rest' ? 'REST DAY' : `${template[i].toUpperCase()} SESSION`,
-      subtitle: template[i] === 'Rest' ? 'Recovery & Mobility' : 'Tap to customize orders',
-      duration: template[i] === 'Rest' ? '0' : '60',
-      rpe: template[i] === 'Rest' ? '0' : '7',
-      complete: false
-    }));
+    return days.map((d, i) => {
+      const type = template[i];
+      const isRest = type === 'Rest' || type === 'Recovery';
+      const assignedMissionId = getMissionOrder(type, userLevel);
+      const assignedWorkout = assignedMissionId ? ALL_WORKOUTS.find(w => w.id === assignedMissionId) : null;
+
+      return {
+        day: d,
+        fullDay: fullDays[i],
+        type: type,
+        title: assignedWorkout ? assignedWorkout.title : (isRest ? 'RECOVERY PROTOCOL' : `${type.toUpperCase()} SESSION`),
+        subtitle: assignedWorkout ? `${assignedWorkout.station} • ${assignedWorkout.level}` : (isRest ? 'Mobility & Hydration' : 'Tap to select mission'),
+        scheduledId: assignedMissionId || null, 
+        duration: isRest ? '0' : '60',
+        rpe: isRest ? '0' : '7',
+        complete: false
+      };
+    });
   };
 
   const completeOnboarding = async () => {
+    // SAVE PROFILE
     const profile = { 
         name: name || 'ATHLETE',
         level,
@@ -133,7 +181,11 @@ export default function Onboarding() {
         joined: new Date().toISOString() 
     };
     await AsyncStorage.setItem('user_profile', JSON.stringify(profile));
+    
+    // SAVE CATEGORY (GENDER CONTEXT)
+    await AsyncStorage.setItem('userCategory', category);
 
+    // GENERATE PLAN
     const initialPlan = generateWeeklyPlan(level);
     await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(initialPlan));
 
@@ -153,9 +205,21 @@ export default function Onboarding() {
             autoCapitalize="words"
         />
 
+        <Text style={[styles.label, { marginTop: 30 }]}>SERVICE CATEGORY</Text>
+        <Text style={styles.helperText}>Used for division standards and PFT benchmarks.</Text>
+        <View style={styles.catGrid}>
+            {DIVISIONS.map((div) => (
+                <TouchableOpacity 
+                    key={div.id} 
+                    style={[styles.catChip, category === div.id && styles.catChipActive]}
+                    onPress={() => setCategory(div.id)}
+                >
+                    <Text style={[styles.catText, category === div.id && {color: '#000'}]}>{div.label}</Text>
+                </TouchableOpacity>
+            ))}
+        </View>
+
         <Text style={[styles.label, { marginTop: 30 }]}>EXPERIENCE LEVEL</Text>
-        <Text style={styles.helperText}>This will determine your weekly training volume.</Text>
-        
         <View style={styles.levelContainer}>
             {LEVELS.map((lvl) => (
                 <TouchableOpacity 
@@ -175,9 +239,8 @@ export default function Onboarding() {
     </ScrollView>
   );
 
-  // --- STEP 2: RACES (WITH FILTER) ---
+  // --- STEP 2: RACES ---
   const renderStep2 = () => {
-      // Filter races
       const filteredRaces = selectedRegion === 'ALL' 
           ? UPCOMING_RACES 
           : UPCOMING_RACES.filter(r => r.region === selectedRegion);
@@ -185,8 +248,6 @@ export default function Onboarding() {
       return (
         <View style={styles.stepContainer}>
             <Text style={styles.label}>SELECT DEPLOYMENT</Text>
-            
-            {/* REGION CHIPS */}
             <View style={{ height: 50, marginBottom: 10 }}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
                     {['ALL', 'UK', 'EUROPE', 'USA', 'APAC', 'LATAM'].map((region) => (
@@ -201,7 +262,6 @@ export default function Onboarding() {
                 </ScrollView>
             </View>
 
-            {/* NO RACE OPTION */}
             <TouchableOpacity 
                 style={[styles.noRaceCard, targetRace === null && styles.raceCardActive]} 
                 onPress={() => setTargetRace(null)}
@@ -286,42 +346,35 @@ export default function Onboarding() {
     <SafeAreaView style={styles.container}>
       <StatusBar style="light" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-        
-        {/* HEADER */}
         <View style={styles.header}>
           {currentStep > 0 ? (
               <TouchableOpacity onPress={handleBack} style={styles.backBtn}>
                   <Ionicons name="arrow-back" size={24} color="#666" />
               </TouchableOpacity>
           ) : <View style={{width: 40}} />}
-          
           <View style={styles.progressContainer}>
               <View style={[styles.progressBar, { width: `${((currentStep + 1) / STEPS.length) * 100}%` }]} />
           </View>
           <View style={{width: 40}} /> 
         </View>
 
-        {/* TITLES */}
         <View style={styles.titleContainer}>
           <Text style={styles.stepTitle}>{STEPS[currentStep].title}</Text>
           <Text style={styles.stepSub}>{STEPS[currentStep].subtitle}</Text>
         </View>
 
-        {/* SLIDING CONTENT */}
         <Animated.View style={[styles.slider, { transform: [{ translateX: slideAnim }] }]}>
           <View style={{ width }}>{renderStep1()}</View>
           <View style={{ width }}>{renderStep2()}</View>
           <View style={{ width }}>{renderStep3()}</View>
         </Animated.View>
 
-        {/* FOOTER */}
         <View style={styles.footer}>
           <TouchableOpacity style={styles.nextBtn} onPress={handleNext}>
               <Text style={styles.nextText}>{currentStep === STEPS.length - 1 ? "INITIALIZE" : "NEXT"}</Text>
               <Ionicons name="arrow-forward" size={20} color="#000" />
           </TouchableOpacity>
         </View>
-
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -347,12 +400,17 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#1E1E1E', fontSize: 24, color: '#fff', padding: 20, borderRadius: 16, fontWeight: 'bold', borderWidth: 1, borderColor: '#333' },
   helperText: { color: '#666', fontSize: 12, marginTop: 8, fontStyle: 'italic', lineHeight: 18 },
 
+  // DIVISION SELECTOR
+  catGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 },
+  catChip: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, backgroundColor: '#1E1E1E', borderWidth: 1, borderColor: '#333' },
+  catChipActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
+  catText: { color: '#666', fontWeight: '900', fontSize: 10 },
+
   // REGION CHIPS
   regionChip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: '#1E1E1E', borderWidth: 1, borderColor: '#333', justifyContent: 'center' },
   regionChipActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
   regionText: { color: '#666', fontWeight: '900', fontSize: 10 },
 
-  // LEVEL CARDS
   levelContainer: { gap: 10, marginTop: 15 },
   levelCard: { backgroundColor: '#1E1E1E', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#333' },
   levelCardActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
@@ -360,17 +418,14 @@ const styles = StyleSheet.create({
   levelTitle: { color: '#fff', fontSize: 16, fontWeight: '900' },
   levelSub: { color: '#666', fontSize: 12, fontWeight: 'bold' },
 
-  // NO RACE CARD
   noRaceCard: { flexDirection: 'row', gap: 15, alignItems: 'center', backgroundColor: '#151515', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#444' },
   iconCircle: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center' },
 
-  // RACE CARDS
   raceCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1E1E1E', padding: 20, borderRadius: 16, marginBottom: 12, borderWidth: 1, borderColor: '#333' },
   raceCardActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
   raceCity: { color: '#fff', fontSize: 18, fontWeight: '900', fontStyle: 'italic' },
   raceDate: { color: '#666', fontSize: 12, fontWeight: 'bold', marginTop: 4 },
 
-  // PROFILE CARDS
   profileContainer: { marginTop: 15, gap: 12 },
   profileCard: { backgroundColor: '#1E1E1E', padding: 20, borderRadius: 16, borderWidth: 1, borderColor: '#333' },
   profileCardActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },

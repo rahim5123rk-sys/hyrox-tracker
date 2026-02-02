@@ -305,5 +305,34 @@ export const ALL_WORKOUTS = [
     steps: ['400m Run', '40 Wall Balls'],
     rounds: 'Repeat 4 Rounds',
     stats: { xp: 350, runKm: 1.6, sledKm: 0 }
+  },
+
+  // =======================================================
+  // 10. BENCHMARKS & TESTS
+  // =======================================================
+
+  { 
+    id: 'pft_1', title: 'THE HYROX PFT', station: 'BENCHMARK', type: 'TEST', level: 'ALL LEVELS',
+    desc: 'The Official Physical Fitness Test. Use this to determine your racing division.',
+    estTime: '15-40 MINS',
+    steps: [
+        '1000m Run', 
+        '50 Burpee Broad Jumps', 
+        '100 Stationary Lunges', 
+        '1000m Row', 
+        '30 HR Push Ups', 
+        '100 Wall Balls'
+    ],
+    rounds: 'FOR TIME',
+    stats: { xp: 500, runKm: 1, sledKm: 0 } 
+  },
+  { 
+    id: 'pft_2', title: 'RUN TEST (5K)', station: 'BENCHMARK', type: 'TEST', level: 'ALL LEVELS',
+    desc: 'Standard aerobic capacity test. Flat road or track.',
+    estTime: '20-35 MINS',
+    steps: ['5km Run for time'],
+    rounds: '1 Round',
+    stats: { xp: 300, runKm: 5, sledKm: 0 } 
   }
+
 ];

@@ -8,16 +8,23 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 
-// --- DATA ---
+// --- UPDATED WEIGHTS DATABASE ---
 const WEIGHTS_DB: any = {
+  // INDIVIDUALS
   MEN_OPEN: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
   MEN_PRO: { sledPush: '202kg', sledPull: '153kg', lunge: '30kg', wallBall: '9kg' },
   WOMEN_OPEN: { sledPush: '102kg', sledPull: '78kg', lunge: '10kg', wallBall: '4kg' },
   WOMEN_PRO: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
-  DOUBLES: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
+  
+  // DOUBLES (Corrected Standards)
+  DOUBLES_MEN: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
+  DOUBLES_WOMEN: { sledPush: '102kg', sledPull: '78kg', lunge: '10kg', wallBall: '4kg' },
+  DOUBLES_MIXED: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' }, // Mixed uses Men's weights for sleds/lunges
+  
+  // FALLBACK
+  RELAY: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' }
 };
 
-// --- CALIBRATED WEIGHTS (REALISTIC HYROX SPLITS) ---
 const BASE_STATIONS = [
   { name: '1km RUN', type: 'run', weight: 1.0, key: 'run', icon: 'walk-outline' },
   { name: 'SKI ERG', type: 'station', weight: 0.95, key: 'ski', details: '1000m', icon: 'snow-outline' },
@@ -43,7 +50,6 @@ export default function Race() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
-  // PARAMS & MODES
   const totalGoalMinutes = parseFloat(params.goalMinutes as string) || 90;
   const bias = (params.bias as string) || 'BALANCED';
   const smartPace = params.smartPace ? parseFloat(params.smartPace as string) : null;
@@ -56,14 +62,20 @@ export default function Race() {
   const [isActive, setIsActive] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const [displayCategory, setDisplayCategory] = useState('');
 
   // INITIALIZE WEIGHTS & TARGETS
   useEffect(() => {
     const loadCategory = async () => {
+      // 1. Determine Category (Prefer Param > Storage > Default)
       let selectedCat = paramCategory;
       if (!selectedCat) {
           selectedCat = await AsyncStorage.getItem('userCategory') || 'MEN_OPEN';
       }
+      setDisplayCategory(selectedCat.replace('_', ' '));
+
+      // 2. Fetch Weights based on exact key (DOUBLES_WOMEN etc)
+      // Fallback to MEN_OPEN if key not found to prevent crashes
       const weights = WEIGHTS_DB[selectedCat] || WEIGHTS_DB.MEN_OPEN;
 
       let updated = BASE_STATIONS.map(s => {
@@ -71,6 +83,11 @@ export default function Race() {
         if (s.key === 'sledPull') return { ...s, details: `${weights.sledPull} (4 x 12.5m)` };
         if (s.key === 'lunge') return { ...s, details: `${weights.lunge} Sandbag (100m)` };
         if (s.key === 'wallBall') return { ...s, details: `${weights.wallBall} (100 Reps)` };
+        // FARMERS CARRY WEIGHT LOGIC (Hardcoded usually, but variable for Pro)
+        if (s.key === 'farmers') {
+             const farmWeight = selectedCat.includes('PRO') ? '32kg' : '24kg';
+             return { ...s, details: `2 x ${farmWeight} KBs (200m)` };
+        }
         return s;
       });
 
@@ -137,14 +154,13 @@ export default function Race() {
 
         const raceDate = new Date().toLocaleDateString();
         
-        // ✅ FIXED SAVING LOGIC HERE
         const raceResult = { 
             date: raceDate, 
             totalTime: formatTime(totalTime), 
             splits: newHistory,
-            type: 'SIMULATION', // Critical for History Filter
-            title: 'HYROX SIMULATION',
-            name: 'HYROX SIMULATION'
+            type: 'SIMULATION', 
+            title: `HYROX SIM (${displayCategory})`, // Added Category to Title
+            name: `HYROX SIM (${displayCategory})`
         };
         
         AsyncStorage.getItem('raceHistory').then(existing => {
@@ -158,8 +174,8 @@ export default function Race() {
       }
 
       const diff = targetSeconds - seconds; 
-      if (diff > 15) speakText(`Banked ${diff} seconds. Easy.`);
-      else if (diff < -15) speakText(`Behind by ${Math.abs(diff)} seconds. Push.`);
+      if (diff > 15) speakText(`Banked ${diff} seconds.`);
+      else if (diff < -15) speakText(`Behind by ${Math.abs(diff)} seconds.`);
       else speakText(`On Pace.`);
 
       setIndex(prev => prev + 1);
@@ -203,7 +219,7 @@ export default function Race() {
         </TouchableOpacity>
         
         <View style={styles.miniTimer}>
-            <Text style={styles.miniLabel}>TOTAL TIME</Text>
+            <Text style={styles.miniLabel}>{displayCategory}</Text>
             <Text style={styles.miniValue}>{formatTime(totalTime)}</Text>
         </View>
 
@@ -224,7 +240,7 @@ export default function Race() {
 
       {/* 3. MAIN DISPLAY */}
       <View style={styles.mainContent}>
-        <Text style={styles.stationLabel}>CURRENT STATION {index + 1}/17</Text>
+        <Text style={styles.stationLabel}>STATION {index + 1}/17</Text>
         <Text style={[styles.stationTitle, { color: currentStation.type === 'run' ? '#fff' : '#4dabf7' }]}>
             {currentStation.name}
         </Text>

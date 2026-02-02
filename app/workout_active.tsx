@@ -10,8 +10,11 @@ export default function WorkoutActive() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
+  // PARAMS
+  const sessionId = params.sessionId as string; // The ID of the planned session
+  const titleParam = params.title as string;
+  
   const [sessionTitle, setSessionTitle] = useState("");
-
   const initialSteps = params.steps 
     ? (typeof params.steps === 'string' ? JSON.parse(params.steps) : ["Warmup", "Work", "Rest"]) 
     : ["Warmup", "Work", "Rest"];
@@ -49,12 +52,9 @@ export default function WorkoutActive() {
 
   const handleNext = () => {
     Vibration.vibrate(50); 
-    
     const currentStepName = activeSteps[currentStepIdx];
     const logName = `${currentStepName} (R${currentRound})`; 
-    
-    const newSplit = { name: logName, time: stepSeconds };
-    setDetailedSplits(prev => [...prev, newSplit]);
+    setDetailedSplits(prev => [...prev, { name: logName, time: stepSeconds }]);
 
     if (currentStepIdx < activeSteps.length - 1) {
       setCurrentStepIdx(prev => prev + 1);
@@ -69,88 +69,80 @@ export default function WorkoutActive() {
         Vibration.vibrate([0, 100, 50, 100]); 
         scrollViewRef.current?.scrollTo({ y: 0, animated: true });
       } else {
-        finishWorkout([...detailedSplits, newSplit]); 
+        finishWorkout(); 
       }
     }
   };
 
   const handleAddSet = () => {
     const currentStepName = activeSteps[currentStepIdx];
-    
     if (currentStepName.toUpperCase().includes('REST')) {
-        Vibration.vibrate(50);
         Alert.alert("RECOVERY MODE", "Cannot add sets during a rest period.");
         return;
     }
-
     const newSteps = [...activeSteps];
     newSteps.splice(currentStepIdx + 1, 0, `${activeSteps[currentStepIdx]} (EXTRA)`);
     setActiveSteps(newSteps);
     Vibration.vibrate(20);
-    Alert.alert("TACTICAL UPDATE", "Extra set added.");
   };
 
-  const finishWorkout = async (finalSplits: {name: string, time: number}[]) => {
+  const finishWorkout = async () => {
     setIsActive(false);
     setShowSummary(true);
     Vibration.vibrate(1000);
 
     const completionTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const finalSplits = [...detailedSplits, {name: "FINISH", time: stepSeconds}];
 
     try {
-        const formattedSplits = finalSplits.map((item) => ({
-            name: item.name,   
-            actual: item.time,
-            target: 0          
-        }));
-
+        // 1. SAVE TO HISTORY (The Logbook)
         const newLog = {
             date: new Date().toLocaleDateString(),
-            completedAt: completionTime, // <--- NEW FIELD
+            completedAt: completionTime,
             totalTime: formatTime(totalSeconds),
-            title: params.title || sessionTitle, 
-            name: params.title || sessionTitle, 
-            splits: formattedSplits,
+            title: titleParam || sessionTitle, 
             type: 'WORKOUT',           
-            sessionType: 'TRAINING',   
+            sessionType: 'TRAINING',
+            splits: finalSplits,
         };
 
         const existingLogs = await AsyncStorage.getItem('raceHistory');
         const history = existingLogs ? JSON.parse(existingLogs) : [];
         await AsyncStorage.setItem('raceHistory', JSON.stringify([newLog, ...history]));
         
-        await syncToPlanner(params.title || sessionTitle, 100);
+        // 2. TICK OFF IN PLANNER (The Engine)
+        if (sessionId) {
+            await markSessionComplete(sessionId);
+        }
     } catch (error) {
         console.error("Failed to save workout:", error);
     }
   };
 
-  const syncToPlanner = async (title: any, xp: number) => {
+  // --- NEW: Updates the planned session status ---
+  const markSessionComplete = async (targetId: string) => {
     try {
-        const planJson = await AsyncStorage.getItem('user_weekly_plan');
-        const plan = planJson ? JSON.parse(planJson) : [];
-        const jsDay = new Date().getDay(); 
-        const dayIndex = jsDay === 0 ? 6 : jsDay - 1;
+        const planJson = await AsyncStorage.getItem('active_weekly_plan');
+        if (!planJson) return;
+        
+        let plan = JSON.parse(planJson);
+        
+        // Find and update the specific session
+        plan = plan.map((session: any) => {
+            if (session.id === targetId) {
+                return { 
+                    ...session, 
+                    status: 'COMPLETED',
+                    feedback: { rpeActual: 8, note: "Completed via Active Mode" } // Default feedback
+                };
+            }
+            return session;
+        });
 
-        if (plan[dayIndex]) {
-            const hour = new Date().getHours();
-            const sessionType = hour < 12 ? 'MORNING WORKOUT' : hour < 18 ? 'AFTERNOON WORKOUT' : 'EVENING WORKOUT';
-            
-            const newEntry = {
-                id: `log-${Date.now()}`,
-                title: title.toString().toUpperCase(),
-                sessionType: sessionType,
-                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                stats: { exercises: activeSteps.length, sets: totalRounds },
-                complete: true,
-                xp: xp
-            };
-            
-            if (!plan[dayIndex].workouts) plan[dayIndex].workouts = [];
-            plan[dayIndex].workouts.push(newEntry);
-            await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(plan));
-        }
-    } catch (e) { console.log(e); }
+        await AsyncStorage.setItem('active_weekly_plan', JSON.stringify(plan));
+    } catch (e) {
+        console.log("Failed to update planner status", e);
+    }
   };
 
   const formatTime = (s: number) => {
@@ -170,28 +162,6 @@ export default function WorkoutActive() {
             <Text style={styles.subLabel}>TOTAL ACTIVE TIME</Text>
         </View>
 
-        <View style={styles.summaryStats}>
-            <View style={styles.statBox}>
-                <Text style={styles.statLabel}>SETS</Text>
-                <Text style={styles.statValue}>{detailedSplits.length}</Text>
-            </View>
-            <View style={styles.statBox}>
-                <Text style={styles.statLabel}>AVG SPLIT</Text>
-                <Text style={styles.statValue}>
-                    {detailedSplits.length > 0 ? formatTime(Math.round(totalSeconds / detailedSplits.length)) : "--:--"}
-                </Text>
-            </View>
-        </View>
-
-        <ScrollView style={{flex: 1, width: '100%', marginTop: 20}} contentContainerStyle={{paddingBottom: 40}}>
-            {detailedSplits.map((split, i) => (
-              <View key={i} style={styles.splitRow}>
-                <Text style={styles.splitIndex}>{split.name.replace(/\(R\d+\)/, '')}</Text>
-                <Text style={styles.splitValue}>{formatTime(split.time)}</Text>
-              </View>
-            ))}
-        </ScrollView>
-
         <TouchableOpacity style={styles.saveBtn} onPress={() => { router.dismissAll(); router.replace('/'); }}>
           <Text style={styles.saveBtnText}>CONFIRM & EXIT</Text>
         </TouchableOpacity>
@@ -202,10 +172,10 @@ export default function WorkoutActive() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
-      
+      {/* HEADER */}
       <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <View>
-            <Text style={styles.sessionType}>{params.title || "TRAINING LAB"}</Text>
+            <Text style={styles.sessionType}>{titleParam || "TRAINING LAB"}</Text>
             <Text style={styles.dynamicTitle}>{sessionTitle}</Text>
         </View>
         <View style={styles.totalTimerBox}>
@@ -214,6 +184,7 @@ export default function WorkoutActive() {
         </View>
       </View>
 
+      {/* PROGRESS */}
       <View style={styles.roundInfo}>
         <Text style={styles.roundText}>ROUND {currentRound} <Text style={{color:'#666'}}>/</Text> {totalRounds}</Text>
         <View style={styles.progressBarBg}>
@@ -221,6 +192,7 @@ export default function WorkoutActive() {
         </View>
       </View>
 
+      {/* STEPS LIST */}
       <ScrollView 
         ref={scrollViewRef}
         style={styles.listContainer} 
@@ -251,6 +223,7 @@ export default function WorkoutActive() {
         })}
       </ScrollView>
 
+      {/* FOOTER */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
         <View style={styles.footerRow}>
             <TouchableOpacity style={styles.addSetBtn} onPress={handleAddSet}>
@@ -303,13 +276,6 @@ const styles = StyleSheet.create({
   summaryHeader: { color: '#fff', fontSize: 24, fontWeight: '900', marginTop: 15, letterSpacing: 1 },
   totalTimeLarge: { color: '#FFD700', fontSize: 60, fontWeight: 'bold', marginVertical: 10, fontVariant: ['tabular-nums'] },
   subLabel: { color: '#666', fontSize: 10, fontWeight: '900', letterSpacing: 2 },
-  summaryStats: { flexDirection: 'row', gap: 15, marginTop: 30 },
-  statBox: { flex: 1, backgroundColor: '#111', padding: 20, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
-  statLabel: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 5 },
-  statValue: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  splitRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
-  splitIndex: { color: '#ccc', fontSize: 14, fontWeight: '500' },
-  splitValue: { color: '#fff', fontSize: 14, fontWeight: 'bold', fontFamily: 'Courier' },
   saveBtn: { backgroundColor: '#FFD700', height: 60, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   saveBtnText: { color: '#000', fontSize: 16, fontWeight: '900' },
 });

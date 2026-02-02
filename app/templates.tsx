@@ -10,11 +10,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EXERCISE_LIBRARY, Exercise } from './data/exercises';
 import { ALL_WORKOUTS } from './data/workouts';
 
-const FILTERS = ["ALL", "CUSTOM", "HYBRID", "SKI ERG", "SLED PUSH", "SLED PULL", "BURPEES", "ROWING", "FARMERS", "LUNGES", "WALL BALLS"];
+// ADDED "BENCHMARKS" TO FILTERS
+const FILTERS = ["ALL", "CUSTOM", "BENCHMARKS", "HYBRID", "SKI ERG", "SLED PUSH", "SLED PULL", "BURPEES", "ROWING", "FARMERS", "LUNGES", "WALL BALLS"];
 
 // TACTICAL COLOR SYSTEM
 const getStationColor = (station: string) => {
   switch (station) {
+    case 'BENCHMARK': return '#FF453A'; // Tactical Red (Tests)
     case 'HYBRID': return '#FFD700'; // Gold
     case 'SLED PUSH': return '#FF3B30'; // Red
     case 'SLED PULL': return '#FF453A'; // Red-Orange
@@ -53,9 +55,6 @@ export default function Templates() {
 
   const addToDraft = (name: string) => {
     setBuildSteps([...buildSteps, name]);
-    // We KEEP the search text so they can add multiple of the same type if they want, 
-    // or clear it manually. Or we can clear it:
-    // setBuildSearch(""); 
   };
 
   const removeFromDraft = (index: number) => {
@@ -88,9 +87,12 @@ export default function Templates() {
   };
 
   const fullLibrary = [...customWorkouts, ...ALL_WORKOUTS];
-  const filteredWorkouts = activeFilter === "ALL" ? fullLibrary : fullLibrary.filter(w => w.station === activeFilter);
   
-  // FIX: Search now defaults to ALL exercises if search bar is empty
+  // FILTER LOGIC: If "BENCHMARKS" is selected, match 'BENCHMARK' station.
+  const filteredWorkouts = activeFilter === "ALL" 
+    ? fullLibrary 
+    : fullLibrary.filter(w => (activeFilter === "BENCHMARKS" ? w.station === 'BENCHMARK' : w.station === activeFilter));
+  
   const searchResults = buildSearch.length > 0 
     ? EXERCISE_LIBRARY.filter((e: Exercise) => e.name.toLowerCase().includes(buildSearch.toLowerCase())) 
     : EXERCISE_LIBRARY;
@@ -184,7 +186,7 @@ export default function Templates() {
             onChangeText={setBuildTitle} 
           />
 
-          {/* 2. DRAFT SEQUENCE (Top Half) */}
+          {/* 2. DRAFT SEQUENCE */}
           <View style={{flexDirection:'row', justifyContent:'space-between', marginTop: 10, marginBottom: 5}}>
             <Text style={styles.label}>SEQUENCE ({buildSteps.length})</Text>
             {buildSteps.length > 0 && <TouchableOpacity onPress={() => setBuildSteps([])}><Text style={{color:'#FF3B30', fontSize:10, fontWeight:'900'}}>CLEAR ALL</Text></TouchableOpacity>}
@@ -213,7 +215,7 @@ export default function Templates() {
             )}
           </View>
 
-          {/* 3. EXERCISE DATABASE (Bottom Half) */}
+          {/* 3. EXERCISE DATABASE */}
           <View style={styles.dbHeader}>
             <Text style={styles.label}>DATABASE</Text>
             <View style={styles.searchBox}>
@@ -257,7 +259,7 @@ export default function Templates() {
         </KeyboardAvoidingView>
       </Modal>
 
-      {/* --- DETAIL MODAL (Unchanged) --- */}
+      {/* --- DETAIL MODAL --- */}
       <Modal visible={!!selectedWorkout} animationType="fade" transparent>
         <BlurView intensity={95} tint="dark" style={styles.detailOverlay}>
             {selectedWorkout && (
@@ -291,9 +293,11 @@ export default function Templates() {
                         router.push({
                             pathname: '/workout_active',
                             params: { 
+                                sessionId: selectedWorkout.id, // Pass ID for tracking
                                 title: selectedWorkout.title, 
                                 steps: JSON.stringify(selectedWorkout.steps),
-                                rounds: String(selectedWorkout.rounds) 
+                                rounds: String(selectedWorkout.rounds),
+                                type: selectedWorkout.type
                             }
                         });
                         setSelectedWorkout(null);
