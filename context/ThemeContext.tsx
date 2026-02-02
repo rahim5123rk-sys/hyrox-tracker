@@ -1,62 +1,65 @@
-import { getAppColors, type AppColorsType } from '@/constants/appColors';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { useColorScheme } from 'react-native';
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { useColorScheme as useSystemColorScheme } from 'react-native';
+import { AppColors, AppColorsType } from '../constants/appColors';
 
-const THEME_STORAGE_KEY = 'app_theme_preference';
+type ThemeMode = 'light' | 'dark' | 'system';
 
-export type ThemePreference = 'light' | 'dark' | 'system';
-
-type ThemeContextValue = {
-  colors: AppColorsType;
+interface ThemeContextType {
+  colors: AppColorsType; // <--- This was missing/named 'theme' before
+  mode: ThemeMode;
   isDark: boolean;
-  preference: ThemePreference;
-  setPreference: (p: ThemePreference) => void;
-};
+  setMode: (mode: ThemeMode) => void;
+}
 
-const ThemeContext = createContext<ThemeContextValue | null>(null);
+// Default/Fallback State
+const ThemeContext = createContext<ThemeContextType>({
+  colors: AppColors.dark, 
+  mode: 'system',
+  isDark: true,
+  setMode: () => {},
+});
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const systemScheme = useColorScheme();
-  const [preference, setPreferenceState] = useState<ThemePreference>('system');
+export const ThemeProvider = ({ children }: { children: React.ReactNode }) => {
+  const systemScheme = useSystemColorScheme();
+  const [mode, setModeState] = useState<ThemeMode>('system');
+  const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    (async () => {
-      try {
-        const saved = await AsyncStorage.getItem(THEME_STORAGE_KEY);
-        if (saved && (saved === 'light' || saved === 'dark' || saved === 'system')) {
-          setPreferenceState(saved);
-        }
-      } catch (_) {}
-    })();
+    loadTheme();
   }, []);
 
-  const setPreference = useCallback(async (p: ThemePreference) => {
-    setPreferenceState(p);
+  const loadTheme = async () => {
     try {
-      await AsyncStorage.setItem(THEME_STORAGE_KEY, p);
-    } catch (_) {}
-  }, []);
+      const savedMode = await AsyncStorage.getItem('app_theme');
+      if (savedMode) setModeState(savedMode as ThemeMode);
+    } catch (e) {
+      console.error('Failed to load theme preference');
+    } finally {
+      setIsReady(true);
+    }
+  };
 
-  const isDark = preference === 'system' ? (systemScheme === 'dark') : preference === 'dark';
-  const colors = useMemo(() => getAppColors(isDark), [isDark]);
+  const setMode = async (newMode: ThemeMode) => {
+    setModeState(newMode);
+    await AsyncStorage.setItem('app_theme', newMode);
+  };
 
-  const value = useMemo<ThemeContextValue>(
-    () => ({ colors, isDark, preference, setPreference }),
-    [colors, isDark, preference, setPreference]
+  // Calculate "Active" Mode
+  const isSystemDark = systemScheme === 'dark';
+  const isDark = mode === 'system' ? isSystemDark : mode === 'dark';
+  
+  // Select the correct color palette
+  const colors = isDark ? AppColors.dark : AppColors.light;
+
+  // Prevent flashing wrong theme on load
+  if (!isReady) return null; 
+
+  return (
+    <ThemeContext.Provider value={{ colors, mode, isDark, setMode }}>
+      {children}
+    </ThemeContext.Provider>
   );
+};
 
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
-}
-
-export function useTheme(): ThemeContextValue {
-  const ctx = useContext(ThemeContext);
-  if (!ctx) {
-    throw new Error('useTheme must be used within ThemeProvider');
-  }
-  return ctx;
-}
-
-export function useThemeOptional(): ThemeContextValue | null {
-  return useContext(ThemeContext);
-}
+export const useTheme = () => useContext(ThemeContext);

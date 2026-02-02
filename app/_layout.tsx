@@ -4,6 +4,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+// Configure Notifications
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
@@ -16,6 +17,7 @@ Notifications.setNotificationHandler({
 
 function StackWithTheme() {
   const { isDark, colors } = useTheme();
+  
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
@@ -23,6 +25,8 @@ function StackWithTheme() {
         screenOptions={{
           headerShown: false,
           contentStyle: { backgroundColor: colors.background },
+          headerStyle: { backgroundColor: colors.background },
+          headerTintColor: colors.text,
         }}
       >
         <Stack.Screen name="(tabs)" />
@@ -39,7 +43,6 @@ function StackWithTheme() {
           name="log_details" 
           options={{ presentation: 'card', animation: 'slide_from_right' }} 
         />
-        {/* NEW MANUAL LOG SCREEN */}
         <Stack.Screen 
           name="manual_log_details" 
           options={{ presentation: 'modal', headerShown: false }} 

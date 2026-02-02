@@ -113,7 +113,6 @@ export default function Progress() {
   const calculateChart = () => {
       const validRaces = raceHistory.filter(r => r.splits && r.splits.length > 0);
       
-      // MINIMUM 5 RACES TO UNLOCK
       if (validRaces.length < 5) {
           setChartData([]); 
           return;
@@ -123,7 +122,6 @@ export default function Progress() {
       const labels = recentRaces.map((_, i) => `R${i + 1}`);
       let rawDataPoints: number[] = [];
       
-      // MODE 1: RACE TIME
       if (chartMode === 'RACE') {
           rawDataPoints = recentRaces.map(r => parseTimeToMinutes(r.totalTime));
           if (rawDataPoints.length > 0) {
@@ -136,12 +134,8 @@ export default function Progress() {
               setInsightSub(diff >= 0 ? `-${diff.toFixed(1)} min` : `+${Math.abs(diff).toFixed(1)} min`);
               setTrendPositive(diff >= 0);
           }
-      } 
-      
-      // MODE 2: STATIONS (With Weakest Link Detection)
-      else if (chartMode === 'STATIONS') {
+      } else if (chartMode === 'STATIONS') {
           if (stationFilter === 'AVG') {
-              // 1. Calculate General Avg for the chart
               rawDataPoints = recentRaces.map(r => {
                   const stations = r.splits.filter(s => !s.name.includes('RUN') && s.name !== 'FINISH');
                   if (stations.length === 0) return 0;
@@ -149,14 +143,11 @@ export default function Progress() {
                   return parseFloat((total / stations.length / 60).toFixed(2));
               });
 
-              // 2. WEAKEST LINK DETECTOR
-              // Scan all station averages to find the slowest one
               let slowestStationName = 'NONE';
               let maxAvgTime = 0;
 
               STATION_OPTIONS.forEach(opt => {
                   if (opt === 'AVG') return;
-                  // Calculate avg time for this station across all recent races
                   let stationTotalTime = 0;
                   let count = 0;
                   recentRaces.forEach(r => {
@@ -176,12 +167,11 @@ export default function Progress() {
               });
 
               setInsightTitle("WEAKEST LINK");
-              setInsightValue(slowestStationName); // e.g. "LUNGES"
+              setInsightValue(slowestStationName);
               setInsightSub("Slowest Avg Station");
-              setTrendPositive(false); // Weakest link is always a "warning"
+              setTrendPositive(false);
 
           } else {
-              // Specific Station Selected
               rawDataPoints = recentRaces.map(r => {
                   const station = r.splits.find(s => s.name.trim().toUpperCase() === stationFilter.trim().toUpperCase());
                   return station ? parseFloat((station.actual / 60).toFixed(2)) : 0;
@@ -196,10 +186,7 @@ export default function Progress() {
               setInsightSub(validPoints.length > 1 ? (current <= first ? "Improved" : "Slower") : "Tracked Trend");
               setTrendPositive(current <= first);
           }
-      }
-      
-      // MODE 3: FATIGUE
-      else if (chartMode === 'FATIGUE') {
+      } else if (chartMode === 'FATIGUE') {
           rawDataPoints = recentRaces.map(r => {
               const runs = r.splits.filter(s => s.name.includes('RUN'));
               if (!runs || runs.length < 4) return 0;
@@ -248,7 +235,6 @@ export default function Progress() {
 
   const isChartLocked = validRaceCount < 5;
   const isDataValid = !isChartLocked && chartLabels.length > 0 && chartData.length > 0;
-  
   const suffix = chartMode === 'FATIGUE' ? '%' : (chartMode === 'STATIONS' ? ' min' : ' min');
   const decimals = chartMode === 'RACE' ? 0 : 1; 
 
@@ -269,31 +255,31 @@ export default function Progress() {
 
   return (
     <View style={styles.container}>
-      
-      {/* HEADER */}
+      {/* HEADER WITH SETTINGS BUTTON */}
       <View style={[styles.header, { paddingTop: insets.top + 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
         </TouchableOpacity>
+        
         <View style={{alignItems: 'center'}}>
             <Text style={styles.headerLabel}>OPERATOR</Text>
             <Text style={styles.headerTitle}>{name}</Text>
         </View>
-        <View style={{width: 40}} />
+
+        {/* SETTINGS BUTTON ADDED HERE */}
+        <TouchableOpacity onPress={() => router.push('/settings')} style={styles.backBtn}>
+            <Ionicons name="settings-sharp" size={24} color="#fff" />
+        </TouchableOpacity>
       </View>
 
       <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
-        
-        {/* IDENTITY CARD */}
         <View style={styles.identityCard}>
           <View style={styles.cardHeaderRow}>
              <View>
                  <Text style={styles.rankLabel}>CURRENT RANK</Text>
                  <Text style={styles.rankTitle}>{rankData.currentRank.title}</Text>
              </View>
-             <View style={styles.xpBadge}>
-                <Text style={styles.xpText}>{stats.xp} XP</Text>
-             </View>
+             <View style={styles.xpBadge}><Text style={styles.xpText}>{stats.xp} XP</Text></View>
           </View>
           <View style={styles.levelContainer}>
             <View style={styles.levelInfo}>
@@ -306,66 +292,31 @@ export default function Progress() {
           </View>
         </View>
 
-        {/* ANALYTICS ENGINE */}
-        <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>MISSION ANALYTICS</Text>
-        </View>
-
+        <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>MISSION ANALYTICS</Text></View>
         <View style={styles.chartContainer}>
-            {/* MAIN TABS */}
             <View style={styles.toggleRow}>
                 {['RACE', 'STATIONS', 'FATIGUE'].map((mode) => (
-                    <TouchableOpacity 
-                        key={mode} 
-                        style={[styles.toggleBtn, chartMode === mode && styles.toggleBtnActive]} 
-                        onPress={() => setChartMode(mode as any)}
-                        disabled={isChartLocked}
-                    >
+                    <TouchableOpacity key={mode} style={[styles.toggleBtn, chartMode === mode && styles.toggleBtnActive]} onPress={() => setChartMode(mode as any)} disabled={isChartLocked}>
                         <Text style={[styles.toggleText, chartMode === mode && {color: '#000'}, isChartLocked && {color: '#444'}]}>{mode}</Text>
                     </TouchableOpacity>
                 ))}
             </View>
-
-            {/* SECONDARY STATION FILTER */}
             {chartMode === 'STATIONS' && !isChartLocked && (
                 <View style={{ marginBottom: 15, height: 35 }}>
                     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap: 8}}>
                         {STATION_OPTIONS.map((st) => (
-                            <TouchableOpacity 
-                                key={st} 
-                                style={[styles.chip, stationFilter === st && styles.chipActive]}
-                                onPress={() => setStationFilter(st)}
-                            >
+                            <TouchableOpacity key={st} style={[styles.chip, stationFilter === st && styles.chipActive]} onPress={() => setStationFilter(st)}>
                                 <Text style={[styles.chipText, stationFilter === st && {color: '#000'}]}>{st}</Text>
                             </TouchableOpacity>
                         ))}
                     </ScrollView>
                 </View>
             )}
-
-            {/* CHART */}
             {isDataValid ? (
                 <>
                     <View style={styles.chartWrapper}>
-                        <LineChart
-                            data={{
-                                labels: chartLabels,
-                                datasets: [{ data: chartData }]
-                            }}
-                            width={SCREEN_WIDTH - 40} 
-                            height={180}
-                            yAxisSuffix={suffix}
-                            chartConfig={chartConfig}
-                            bezier
-                            fromZero={true}
-                            style={styles.chart}
-                            withInnerLines={true}
-                            withOuterLines={false}
-                            withVerticalLines={false}
-                        />
+                        <LineChart data={{ labels: chartLabels, datasets: [{ data: chartData }] }} width={SCREEN_WIDTH - 40} height={180} yAxisSuffix={suffix} chartConfig={chartConfig} bezier fromZero={true} style={styles.chart} withInnerLines={true} withOuterLines={false} withVerticalLines={false} />
                     </View>
-                    
-                    {/* INSIGHT BOX */}
                     <View style={[styles.trendBox, { borderColor: trendPositive ? '#32D74B' : '#FF453A', backgroundColor: trendPositive ? 'rgba(50, 215, 75, 0.1)' : 'rgba(255, 69, 58, 0.1)' }]}>
                         <View style={{flex: 1}}>
                             <Text style={[styles.trendLabel, { color: trendPositive ? "#32D74B" : "#FF453A" }]}>{insightTitle}</Text>
@@ -381,19 +332,14 @@ export default function Progress() {
                 <View style={styles.emptyChart}>
                     <Ionicons name="lock-closed-outline" size={40} color="#666" />
                     <Text style={styles.emptyText}>GATHERING INTEL</Text>
-                    
                     <View style={{width: '60%', height: 6, backgroundColor: '#333', borderRadius: 3, marginVertical: 10}}>
                         <View style={{width: `${(validRaceCount / 5) * 100}%`, height: '100%', backgroundColor: '#FFD700', borderRadius: 3}} />
                     </View>
-                    
-                    <Text style={styles.emptySub}>
-                        {validRaceCount}/5 Simulations Complete
-                    </Text>
+                    <Text style={styles.emptySub}>{validRaceCount}/5 Simulations Complete</Text>
                 </View>
             )}
         </View>
 
-        {/* 3. TROPHY CASE */}
         <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>TROPHY CASE</Text>
             <TouchableOpacity onPress={() => { setEditingPbs({...pbs}); setShowEditPBModal(true); }}>
@@ -420,7 +366,6 @@ export default function Progress() {
         </View>
         <View style={{height: 40}} />
         
-        {/* 4. CAREER VOLUME */}
         <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>SERVICE RECORD</Text></View>
         <View style={styles.statsGrid}>
            <View style={styles.statBox}>
@@ -438,7 +383,6 @@ export default function Progress() {
         </View>
       </ScrollView>
 
-      {/* EDIT MODAL */}
       <Modal visible={showEditPBModal} animationType="slide" transparent>
         <BlurView intensity={90} tint="dark" style={styles.modalContainer}>
             <View style={[styles.modalContent, {height: '70%'}]}>
@@ -476,7 +420,6 @@ const styles = StyleSheet.create({
   backBtn: { padding: 8, backgroundColor: '#1E1E1E', borderRadius: 12 },
   headerTitle: { color: '#FFD700', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
   headerLabel: { color: '#666', fontSize: 9, fontWeight: 'bold' },
-
   identityCard: { backgroundColor: '#1E1E1E', marginHorizontal: 20, padding: 20, borderRadius: 20, marginBottom: 25, borderWidth: 1, borderColor: '#333' },
   cardHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
   rankLabel: { color: '#666', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
@@ -489,44 +432,35 @@ const styles = StyleSheet.create({
   levelNext: { color: '#666', fontSize: 10, fontWeight: 'bold' },
   progressBarBg: { height: 8, backgroundColor: '#333', borderRadius: 4 },
   progressBarFill: { height: '100%', backgroundColor: '#FFD700', borderRadius: 4 },
-
   chartContainer: { backgroundColor: '#1E1E1E', marginHorizontal: 20, borderRadius: 20, padding: 15, borderWidth: 1, borderColor: '#333', marginBottom: 25 },
   toggleRow: { flexDirection: 'row', backgroundColor: '#111', borderRadius: 12, padding: 4, marginBottom: 15 },
   toggleBtn: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 10 },
   toggleBtnActive: { backgroundColor: '#FFD700' },
   toggleText: { color: '#666', fontSize: 10, fontWeight: '900' },
-  
   chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#111', borderWidth: 1, borderColor: '#333', marginRight: 5 },
   chipActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
   chipText: { color: '#666', fontSize: 10, fontWeight: '900' },
-
   chartWrapper: { alignItems: 'center', marginBottom: 15, paddingRight: 20 },
   chart: { borderRadius: 16 }, 
-  
   trendBox: { flexDirection: 'row', alignItems: 'center', padding: 15, borderRadius: 12, borderWidth: 1 },
   trendLabel: { fontSize: 10, fontWeight: '900', marginBottom: 4 },
   trendValue: { color: '#fff', fontSize: 22, fontWeight: '900' },
   trendSub: { fontSize: 10, fontWeight: 'bold', marginTop: 4 },
-
   emptyChart: { height: 180, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#444', fontWeight: '900', fontSize: 14, marginTop: 10 },
   emptySub: { color: '#666', fontSize: 10, marginTop: 5, textAlign: 'center', fontWeight: 'bold' },
-
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 25, marginBottom: 15 },
   sectionTitle: { color: '#fff', fontSize: 12, fontWeight: '900', letterSpacing: 1 },
   editLink: { color: '#FFD700', fontSize: 10, fontWeight: 'bold' },
-  
   pbGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10 },
   pbCard: { width: (SCREEN_WIDTH - 50) / 2, backgroundColor: '#1E1E1E', padding: 15, borderRadius: 15, borderWidth: 1, borderColor: '#333' },
   pbLabel: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 8 },
   pbValue: { color: '#fff', fontSize: 20, fontWeight: '900' },
-
   statsGrid: { flexDirection: 'row', marginHorizontal: 20, gap: 10, marginBottom: 30 },
   statBox: { flex: 1, backgroundColor: '#121212', padding: 15, borderRadius: 15, alignItems: 'center', borderWidth: 1, borderColor: '#222' },
   statNum: { color: '#fff', fontSize: 20, fontWeight: '900' },
   statLabel: { color: '#666', fontSize: 9, fontWeight: 'bold', marginTop: 4 },
   unit: { fontSize: 10, color: '#444' },
-
   modalContainer: { flex: 1, justifyContent: 'flex-end' },
   modalContent: { height: '80%', backgroundColor: '#121212', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
