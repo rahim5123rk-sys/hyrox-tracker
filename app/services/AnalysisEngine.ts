@@ -4,32 +4,93 @@ import { AnalyticsProfile } from './DataStore';
 export interface AnalysisReport {
   archetype: string;
   archetypeDesc: string;
-  primaryWeakness: string; // e.g. "WALL BALLS"
-  secondaryWeakness: string; // e.g. "ROXZONE"
+  primaryWeakness: string; 
+  secondaryWeakness: string;
   focusArea: string; 
   tacticalAdvice: string[];
   radarAnalysis: string;
   recommendedWorkouts: any[];
 }
 
-// ELITE STANDARDS (Seconds) - The "Gold Standard"
-const ELITE = {
-    RUN_PACE: 240,      // 4:00/km
-    SKI: 230,           // 3:50
-    SLED_PUSH: 140,     // 2:20
-    SLED_PULL: 200,     // 3:20
-    BURPEES: 230,       // 3:50
-    ROW: 230,           // 3:50
-    FARMERS: 90,        // 1:30
-    LUNGES: 200,        // 3:20
-    WALLBALLS: 200,     // 3:20
-    ROXZONE: 300        // 5:00 Total
+// [UPDATE] DYNAMIC ELITE STANDARDS (Seconds)
+// Based on Top 5% Finisher Data (True Elite for that Division)
+const ELITE_STANDARDS: Record<string, any> = {
+    MEN_PRO: {
+        RUN_PACE: 210,  // 3:30/km
+        SKI: 210,       // 3:30
+        SLED_PUSH: 135, // 2:15 (Heavy)
+        SLED_PULL: 165, // 2:45 (Heavy)
+        BURPEES: 225,   // 3:45
+        ROW: 190,       // 3:10
+        FARMERS: 95,    // 1:35 (Heavy)
+        LUNGES: 195,    // 3:15 (Heavy)
+        WALLBALLS: 225, // 3:45 (Heavy)
+        ROXZONE: 210    // 3:30 Total
+    },
+    WOMEN_PRO: {
+        RUN_PACE: 235,  // 3:55/km
+        SKI: 240,       // 4:00
+        SLED_PUSH: 165, // 2:45 (Heavy)
+        SLED_PULL: 195, // 3:15 (Heavy)
+        BURPEES: 255,   // 4:15
+        ROW: 220,       // 3:40
+        FARMERS: 110,   // 1:50 (Heavy)
+        LUNGES: 225,    // 3:45 (Heavy)
+        WALLBALLS: 255, // 4:15 (Heavy)
+        ROXZONE: 240    // 4:00 Total
+    },
+    MEN_OPEN: {
+        RUN_PACE: 240,  // 4:00/km
+        SKI: 225,       // 3:45
+        SLED_PUSH: 140, // 2:20
+        SLED_PULL: 180, // 3:00
+        BURPEES: 240,   // 4:00
+        ROW: 225,       // 3:45
+        FARMERS: 105,   // 1:45
+        LUNGES: 210,    // 3:30
+        WALLBALLS: 240, // 4:00
+        ROXZONE: 270    // 4:30 Total
+    },
+    WOMEN_OPEN: {
+        RUN_PACE: 270,  // 4:30/km
+        SKI: 255,       // 4:15
+        SLED_PUSH: 165, // 2:45
+        SLED_PULL: 225, // 3:45
+        BURPEES: 285,   // 4:45
+        ROW: 255,       // 4:15
+        FARMERS: 135,   // 2:15
+        LUNGES: 240,    // 4:00
+        WALLBALLS: 270, // 4:30
+        ROXZONE: 300    // 5:00 Total
+    },
+    // DOUBLES: Faster stations (split work), similiar run pace
+    DOUBLES_MEN: {
+        RUN_PACE: 230, SKI: 120, SLED_PUSH: 80, SLED_PULL: 100, BURPEES: 120,
+        ROW: 120, FARMERS: 60, LUNGES: 110, WALLBALLS: 120, ROXZONE: 200
+    },
+    DOUBLES_WOMEN: {
+        RUN_PACE: 260, SKI: 135, SLED_PUSH: 95, SLED_PULL: 120, BURPEES: 140,
+        ROW: 135, FARMERS: 75, LUNGES: 130, WALLBALLS: 140, ROXZONE: 220
+    },
+    DOUBLES_MIXED: {
+        RUN_PACE: 245, SKI: 130, SLED_PUSH: 90, SLED_PULL: 110, BURPEES: 130,
+        ROW: 130, FARMERS: 70, LUNGES: 120, WALLBALLS: 130, ROXZONE: 210
+    }
 };
 
 export const AnalysisEngine = {
   
-  generateReport(stats: AnalyticsProfile): AnalysisReport {
-    // 1. DATA EXTRACTION (Most Recent Valid)
+  // [UPDATE] Now accepts 'category' to select the correct benchmark
+  generateReport(stats: AnalyticsProfile, category: string = 'MEN_OPEN'): AnalysisReport {
+    
+    // 1. SELECT BENCHMARK
+    const ELITE = ELITE_STANDARDS[category] || ELITE_STANDARDS.MEN_OPEN;
+
+    // 2. DATA EXTRACTION (Most Recent Valid)
+    // [NOTE] Includes Bio-Decay logic if you added it, otherwise standard extraction
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    const NOW = Date.now();
+    
     const get = (arr: number[]) => {
         const clean = arr.filter(n => n > 0);
         return clean.length > 0 ? clean[clean.length - 1] : 0;
@@ -50,8 +111,7 @@ export const AnalysisEngine = {
     const lunges = get(stats.trends.lunges);
     const wallBalls = get(stats.trends.wallBalls);
 
-    // 2. CALCULATE "BLEED" (Performance Deficit vs Elite)
-    // Result is % slower. 0.0 = Elite, 0.5 = 50% Slower
+    // 3. CALCULATE "BLEED" (Performance Deficit vs SELECTED Elite)
     const bleed = (actual: number, goal: number) => (actual > 0) ? (actual - goal) / goal : 0;
 
     const b = {
@@ -67,7 +127,7 @@ export const AnalysisEngine = {
         rox: bleed(roxzone, ELITE.ROXZONE)
     };
 
-    // 3. IDENTIFY CRITICAL FAILURE POINTS (Highest Bleed)
+    // 4. IDENTIFY CRITICAL FAILURE POINTS
     const stations = [
         { id: "SKI ERG", val: b.ski },
         { id: "SLED PUSH", val: b.push },
@@ -79,12 +139,11 @@ export const AnalysisEngine = {
         { id: "WALL BALLS", val: b.wall }
     ];
     
-    // Sort by biggest deficit (Desceding)
     stations.sort((a, b) => b.val - a.val);
     const worstStation = stations[0];
     const secondWorst = stations[1];
 
-    // 4. DIAGNOSTIC LOGIC TREE (Archetype Detection)
+    // 5. DIAGNOSTIC LOGIC TREE (Archetype Detection)
     let archetype = "THE ROOKIE";
     let desc = "Metrics established. Ready for optimization.";
     let advice: string[] = [];
@@ -115,7 +174,7 @@ export const AnalysisEngine = {
         focus = "ENDURANCE";
         radarText = "Bio-signature shows high peak power but critical lack of 'Grit'.";
     }
-    // --- SCENARIO C: THE "RUNNER" (Fast Run, Weak Sleds) ---
+    // --- SCENARIO C: THE "MARATHONER" (Fast Run, Weak Sleds) ---
     else if (b.run < 0.2 && (b.push > 0.4 || b.pull > 0.4)) {
         archetype = "THE MARATHONER";
         desc = "Elite lungs, but you crumple under the heavy weights. The sleds are burying you.";
@@ -139,7 +198,7 @@ export const AnalysisEngine = {
         focus = "SPEED";
         radarText = "Dominant 'Power' score. 'Speed' is the sole limiting factor.";
     }
-    // --- SCENARIO E: THE "GYM BRO" (Good Farmers/Lunges, Bad Cardio) ---
+    // --- SCENARIO E: THE "LIFTER" (Good Farmers/Lunges, Bad Cardio) ---
     else if (b.farm < 0.2 && b.lunge < 0.2 && (b.row > 0.4 || b.ski > 0.4)) {
         archetype = "THE LIFTER";
         desc = "Static strength is elite, but sustained aerobic output (Ski/Row) is weak.";
@@ -188,12 +247,12 @@ export const AnalysisEngine = {
         radarText = "Nearly flawless bio-signature. Maximized potential.";
     }
 
-    // 5. GENERATE STATION SPECIFIC ADVICE (If not covered above)
+    // 6. GENERATE STATION SPECIFIC ADVICE (If not covered above)
     if (advice.length < 3) {
         advice.push(`Drill your weakness: ${worstStation.id} is your biggest bleed.`);
     }
 
-    // 6. RECOMMEND WORKOUTS
+    // 7. RECOMMEND WORKOUTS
     const filterKey = focus === "ELITE" ? "ADVANCED" : focus;
     const recommended = ALL_WORKOUTS
         .filter(w => w.type.toUpperCase().includes(filterKey) || w.station.toUpperCase().includes(filterKey))

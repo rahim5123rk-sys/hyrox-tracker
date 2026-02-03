@@ -15,7 +15,13 @@
     },
     "plugins": [
       "expo-router",
-      ["expo-health-connect", { "healthPermission": "Sync your fitness data." }]
+      [
+        "expo-health-connect",
+        {
+          "healthPermission": "Sync your fitness data."
+        }
+      ],
+      "expo-sqlite"
     ]
   }
 }

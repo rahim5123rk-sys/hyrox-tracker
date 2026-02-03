@@ -23,6 +23,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { updateStreak } from '../../utils/gamification';
 import { calculateRoxPace, CATEGORIES, predictFinishTime } from '../../utils/pacing';
 import { Region, UPCOMING_RACES } from './../data/races';
+// [CHANGE 1] Import the new SQLite DataStore
+import { DataStore } from './../services/DataStore';
 
 const HEADER_MAX_HEIGHT = 320;
 
@@ -142,6 +144,7 @@ export default function Home() {
       setShowLogModal(true);
   };
 
+  // [CHANGE 2] Updated Save Function to use SQLite DataStore
   const saveQuickLog = async () => {
       let finalTime = '';
       if (logMinutes || logSeconds) {
@@ -155,12 +158,13 @@ export default function Home() {
       else if (logType === 'STATION') logTitle = `${logSubCategory || 'STATION'}`;
       else logTitle = `${logSubCategory || 'GYM'} SESSION`;
 
-      const timestamp = new Date().toLocaleDateString();
       const completedAt = new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
 
       try {
           const newHistoryLog = { 
-              date: timestamp,
+              id: `quick-${Date.now()}`, 
+              date: new Date().toISOString(), // Use ISO for sorting in DB
+              timestamp: Date.now(),          // Required for DataStore sort
               completedAt: completedAt,
               totalTime: finalTime || '--:--', 
               type: logType, 
@@ -176,10 +180,10 @@ export default function Home() {
               }
           };
 
-          const existing = await AsyncStorage.getItem('raceHistory');
-          const history = existing ? JSON.parse(existing) : [];
-          await AsyncStorage.setItem('raceHistory', JSON.stringify([newHistoryLog, ...history]));
+          // WRITE TO SQLITE DATABASE
+          await DataStore.logEvent(newHistoryLog);
           
+          // (Legacy Weekly Plan Logic - Preserved)
           const planJson = await AsyncStorage.getItem('user_weekly_plan');
           if (planJson) {
               const plan = JSON.parse(planJson);
@@ -187,7 +191,7 @@ export default function Home() {
               if (plan[todayIndex]) {
                   if (!plan[todayIndex].workouts) plan[todayIndex].workouts = [];
                   plan[todayIndex].workouts.push({
-                      id: `manual-${Date.now()}`,
+                      id: newHistoryLog.id,
                       title: logTitle.toUpperCase(),
                       sessionType: 'QUICK LOG',
                       timestamp: completedAt,

@@ -75,8 +75,8 @@ export default function Profile() {
       
       calculateBioSignature(dossier.analytics);
       
-      // GENERATE REPORT
-      const coachReport = AnalysisEngine.generateReport(dossier.analytics);
+      // [FIX] PASS CATEGORY TO GENERATE REPORT
+      const coachReport = AnalysisEngine.generateReport(dossier.analytics, category);
       setReport(coachReport);
 
       const savedPbs = await AsyncStorage.getItem('user_pbs');
