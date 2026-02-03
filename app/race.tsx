@@ -3,13 +3,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { useEffect, useRef, useState } from 'react';
-import { Dimensions, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
+import { Alert, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DataStore } from './services/DataStore';
 
-const { width } = Dimensions.get('window');
+// --- CONSTANTS ---
+const RECOVERY_KEY = 'hyrox_race_recovery_state';
 
-// --- WEIGHTS DATABASE ---
+// --- WEIGHTS DATABASE (UNCHANGED) ---
 const WEIGHTS_DB: any = {
   MEN_OPEN: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
   MEN_PRO: { sledPush: '202kg', sledPull: '153kg', lunge: '30kg', wallBall: '9kg' },
@@ -46,20 +47,21 @@ export default function Race() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
-  const totalGoalMinutes = parseFloat(params.goalMinutes as string) || 90;
-  const bias = (params.bias as string) || 'BALANCED';
-  const smartPace = params.smartPace ? parseFloat(params.smartPace as string) : null;
-  const paramCategory = params.category as string;
+  // PARAMS (May be overridden by recovery)
+  const [goalMinutes, setGoalMinutes] = useState(parseFloat(params.goalMinutes as string) || 90);
+  const [bias, setBias] = useState((params.bias as string) || 'BALANCED');
+  const [smartPace, setSmartPace] = useState(params.smartPace ? parseFloat(params.smartPace as string) : null);
+  const [category, setCategory] = useState(params.category as string || 'MEN_OPEN');
 
   const [stations, setStations] = useState(BASE_STATIONS); 
   const [index, setIndex] = useState(0);
   
-  // --- TIMER STATE ---
+  // TIMER STATE
   const [seconds, setSeconds] = useState(0);      
   const [totalTime, setTotalTime] = useState(0);  
   const [isActive, setIsActive] = useState(false);
   
-  // REFS FOR ACCURACY
+  // REFS (For Date-Math accuracy)
   const stationStartRef = useRef<number | null>(null);
   const raceStartRef = useRef<number | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -68,15 +70,80 @@ export default function Race() {
   const [history, setHistory] = useState<any[]>([]);
   const [displayCategory, setDisplayCategory] = useState('');
 
-  // 1. SETUP
+  // 1. INIT & RECOVERY CHECK
   useEffect(() => {
-    const loadCategory = async () => {
-      let selectedCat = paramCategory;
-      if (!selectedCat) {
-          selectedCat = await AsyncStorage.getItem('userCategory') || 'MEN_OPEN';
-      }
-      setDisplayCategory(selectedCat.replace('_', ' '));
+    checkRecovery();
+  }, []);
 
+  const checkRecovery = async () => {
+      try {
+          const savedState = await AsyncStorage.getItem(RECOVERY_KEY);
+          if (savedState) {
+              const state = JSON.parse(savedState);
+              const now = Date.now();
+              const diff = now - state.savedAt;
+
+              // Only recover if saved less than 3 hours ago
+              if (diff < 3 * 60 * 60 * 1000) {
+                  Alert.alert(
+                      "CRASH RECOVERED",
+                      "We found an active race that was interrupted. Resuming from where you left off.",
+                      [
+                          { text: "Discard", style: "destructive", onPress: () => clearRecovery() },
+                          { text: "Resume", onPress: () => resumeState(state) }
+                      ]
+                  );
+                  return; // Don't load default config yet
+              } else {
+                  clearRecovery(); // Too old, trash it
+              }
+          }
+          // Normal Load
+          loadConfig(category);
+      } catch (e) { loadConfig(category); }
+  };
+
+  const resumeState = (state: any) => {
+      setCategory(state.category);
+      setGoalMinutes(state.goalMinutes);
+      setBias(state.bias);
+      setSmartPace(state.smartPace);
+      setHistory(state.history);
+      setIndex(state.index);
+      
+      // RESTORE TIMERS (The Magic)
+      raceStartRef.current = state.raceStartRef;
+      stationStartRef.current = state.stationStartRef;
+      
+      // Calculate elapsed time since the crash
+      // We assume the race KEPT GOING in real world time
+      setIsActive(true);
+      loadConfig(state.category); // Reload stations/weights
+  };
+
+  const clearRecovery = async () => {
+      await AsyncStorage.removeItem(RECOVERY_KEY);
+  };
+
+  const saveRecoveryState = async (newHistory: any[], newIndex: number) => {
+      if (!isActive && newIndex === 0) return; // Don't save if not started
+      
+      const state = {
+          savedAt: Date.now(),
+          category, goalMinutes, bias, smartPace,
+          history: newHistory,
+          index: newIndex,
+          raceStartRef: raceStartRef.current,
+          stationStartRef: stationStartRef.current || Date.now() // Save the start time of current station
+      };
+      await AsyncStorage.setItem(RECOVERY_KEY, JSON.stringify(state));
+  };
+
+  const loadConfig = async (cat: string) => {
+      let selectedCat = cat;
+      if (!selectedCat) selectedCat = await AsyncStorage.getItem('userCategory') || 'MEN_OPEN';
+      
+      setDisplayCategory(selectedCat.replace('_', ' '));
       const weights = WEIGHTS_DB[selectedCat] || WEIGHTS_DB.MEN_OPEN;
 
       let updated = BASE_STATIONS.map(s => {
@@ -96,32 +163,34 @@ export default function Race() {
           else if (bias === 'LIFTER') updated = updated.map(s => s.type === 'station' ? { ...s, weight: s.weight * 0.85 } : { ...s, weight: s.weight * 1.15 });
       }
       setStations(updated);
-    };
-    loadCategory();
-  }, [bias, paramCategory]);
+  };
 
-  const currentStation = stations[index];
+  const currentStation = stations[index] || stations[stations.length - 1];
   
   const getTargetSeconds = () => {
+      if (!currentStation) return 0;
       if (smartPace && currentStation.type === 'run') return Math.floor(smartPace);
       const totalWeight = stations.reduce((acc, item) => acc + item.weight, 0);
-      const secondsPerUnit = (totalGoalMinutes * 60) / totalWeight;
+      const secondsPerUnit = (goalMinutes * 60) / totalWeight;
       return Math.floor(secondsPerUnit * currentStation.weight);
   };
 
   const targetSeconds = getTargetSeconds();
 
-  // 2. TICKER
+  // 2. TICKER (DATE MATH - Prevents Drift)
   useEffect(() => {
     if (isActive) {
       if (!stationStartRef.current) stationStartRef.current = Date.now();
       if (!raceStartRef.current) raceStartRef.current = Date.now();
 
+      // IMMEDIATE SAVE ON START
+      if (index === 0 && seconds === 0) saveRecoveryState(history, index);
+
       intervalRef.current = setInterval(() => {
         const now = Date.now();
         setSeconds(Math.floor((now - (stationStartRef.current || now)) / 1000));
         setTotalTime(Math.floor((now - (raceStartRef.current || now)) / 1000));
-      }, 200);
+      }, 500); // 500ms check is enough for UI, reduces CPU load
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
@@ -148,6 +217,7 @@ export default function Race() {
       raceStartRef.current = Date.now();
       setIsActive(true);
       speakText("Race Started. Stick to the plan.");
+      saveRecoveryState([], 0); // Init Save
     } else {
       const actualTime = seconds;
       const newHistory = [...history, { name: currentStation.name, actual: actualTime, target: targetSeconds }];
@@ -157,65 +227,68 @@ export default function Race() {
         setIsActive(false);
         speakText("Race Finished. Well done.");
         
+        // Log to DataStore (New Schema)
         const raceResult = { 
           date: new Date().toISOString(), 
-          totalTime: formatTime(totalTime), 
-          splits: newHistory,
+          totalTime: formatTime(totalTime),
+          totalSeconds: totalTime, 
+          splits: newHistory, // Compatible with new DataStore
           type: 'SIMULATION', 
           title: `HYROX SIM (${displayCategory})`,
           name: `HYROX SIM (${displayCategory})`
         };
         await DataStore.logEvent(raceResult);
+        
+        // CLEAR RECOVERY ON FINISH
+        await clearRecovery();
 
         router.replace({ pathname: "/results", params: { data: JSON.stringify(newHistory), totalTime: formatTime(totalTime) } });
         return;
       }
 
+      // Check Pace
       const diff = targetSeconds - actualTime; 
       if (diff > 15) speakText(`Banked ${diff} seconds.`);
       else if (diff < -15) speakText(`Behind by ${Math.abs(diff)} seconds.`);
       else speakText(`On Pace.`);
 
-      setIndex(prev => prev + 1);
+      // Advance
+      const nextIndex = index + 1;
+      setIndex(nextIndex);
       setSeconds(0); 
       stationStartRef.current = Date.now(); 
+      
+      // CRITICAL: SAVE STATE
+      saveRecoveryState(newHistory, nextIndex);
     }
   };
 
   const handleUndo = () => {
     if (index === 0) return; 
     Vibration.vibrate(50);
-    setIndex(prev => prev - 1);
+    const prevIndex = index - 1;
+    setIndex(prevIndex);
     setSeconds(0); 
     stationStartRef.current = Date.now();
-    setHistory(prev => prev.slice(0, -1));
+    
+    const revertedHistory = history.slice(0, -1);
+    setHistory(revertedHistory);
+    saveRecoveryState(revertedHistory, prevIndex);
   };
 
-  // --- 3. LIVE PACER LOGIC (THE FIX) ---
+  // --- LIVE PACER ---
   const getPacerStatus = () => {
       if (!isActive && index === 0) return { text: 'READY TO RACE', color: '#FFD700', bg: 'rgba(255, 215, 0, 0.15)' };
-
-      // 1. Banked Time from COMPLETED stations
       const totalTargetSoFar = history.reduce((acc, item) => acc + item.target, 0);
       const totalActualSoFar = history.reduce((acc, item) => acc + item.actual, 0);
       const bankedHistory = totalTargetSoFar - totalActualSoFar;
-
-      // 2. LIVE BUDGET (Counting Down)
-      // "How much time do I have left on this station before I eat into my history?"
-      // Formula: History Bank + (Target for Station - Time Elapsed on Station)
       const currentCushion = targetSeconds - seconds;
       const liveLead = bankedHistory + currentCushion;
-
       const absLead = Math.abs(liveLead);
       const timeStr = formatTime(absLead);
 
-      if (liveLead >= 0) {
-          // You have time remaining. Green.
-          return { text: `TIME CUSHION (${timeStr})`, color: '#32D74B', bg: 'rgba(50, 215, 75, 0.15)' };
-      } else {
-          // You are behind schedule. Red.
-          return { text: `BEHIND PACE (+${timeStr})`, color: '#FF453A', bg: 'rgba(255, 69, 58, 0.15)' };
-      }
+      if (liveLead >= 0) return { text: `TIME CUSHION (${timeStr})`, color: '#32D74B', bg: 'rgba(50, 215, 75, 0.15)' };
+      else return { text: `BEHIND PACE (+${timeStr})`, color: '#FF453A', bg: 'rgba(255, 69, 58, 0.15)' };
   };
 
   const pacer = getPacerStatus();
@@ -224,9 +297,18 @@ export default function Race() {
     <View style={[styles.container, { backgroundColor: currentStation.type === 'run' ? '#000' : '#111' }]}>
       <StatusBar barStyle="light-content" />
       
-      {/* 1. HEADER */}
+      {/* HEADER */}
       <View style={[styles.header, { paddingTop: insets.top }]}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.iconBtn}>
+        <TouchableOpacity onPress={() => {
+            if (isActive) {
+                Alert.alert("ABORT MISSION?", "This will discard your current race data.", [
+                    { text: "Cancel", style: "cancel" },
+                    { text: "Abort", style: "destructive", onPress: () => { clearRecovery(); router.back(); } }
+                ]);
+            } else {
+                router.back();
+            }
+        }} style={styles.iconBtn}>
            <Ionicons name="close-circle-outline" size={28} color="#666" />
         </TouchableOpacity>
         
@@ -240,7 +322,7 @@ export default function Race() {
         </TouchableOpacity>
       </View>
 
-      {/* 2. PROGRESS BAR */}
+      {/* PROGRESS */}
       <View style={styles.progressTrack}>
         {stations.map((_, i) => (
             <View key={i} style={[
@@ -250,7 +332,7 @@ export default function Race() {
         ))}
       </View>
 
-      {/* 3. MAIN DISPLAY */}
+      {/* MAIN DISPLAY */}
       <View style={styles.mainContent}>
         <Text style={styles.stationLabel}>STATION {index + 1}/17</Text>
         <Text style={[styles.stationTitle, { color: currentStation.type === 'run' ? '#fff' : '#4dabf7' }]}>
@@ -263,31 +345,21 @@ export default function Race() {
           </View>
         )}
 
-        {/* LARGE TIMER */}
-        <Text style={[styles.mainTimer, { color: '#fff' }]}>
-            {formatTime(seconds)}
-        </Text>
+        <Text style={[styles.mainTimer, { color: '#fff' }]}>{formatTime(seconds)}</Text>
 
-        {/* TARGET LABEL */}
         <View style={{flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20}}>
              <Text style={{color: '#666', fontWeight: 'bold', fontSize: 16}}>TARGET:</Text>
              <Text style={{color: '#FFD700', fontWeight: '900', fontSize: 24, fontVariant: ['tabular-nums']}}>{formatTime(targetSeconds)}</Text>
         </View>
 
-        {/* LIVE PACER BADGE */}
         <View style={[styles.pacerBadge, { backgroundColor: pacer.bg }]}>
-            <Text style={[styles.pacerText, { color: pacer.color }]}>
-                {pacer.text}
-            </Text>
+            <Text style={[styles.pacerText, { color: pacer.color }]}>{pacer.text}</Text>
         </View>
         
-        {/* SMART MODE INDICATOR */}
-        {smartPace && (
-            <Text style={styles.smartModeText}>SMART PACER ACTIVE</Text>
-        )}
+        {smartPace && <Text style={styles.smartModeText}>SMART PACER ACTIVE</Text>}
       </View>
 
-      {/* 4. FOOTER */}
+      {/* FOOTER */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
           {isActive && index > 0 && (
              <TouchableOpacity style={styles.undoBtn} onPress={handleUndo}>

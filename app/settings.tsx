@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { Alert, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CATEGORIES } from '../utils/pacing';
-import { DataStore } from './services/DataStore'; // IMPORTS FIXED
+import { DataStore } from './services/DataStore'; // [FIX] Import DataStore
 
 export default function Settings() {
   const router = useRouter();
@@ -25,13 +25,22 @@ export default function Settings() {
 
   const loadSettings = async () => {
     try {
-      const profile = await AsyncStorage.getItem('user_profile');
-      if (profile) {
-          const p = JSON.parse(profile);
-          if (p.name) setName(p.name);
+      // [FIX] Read from SQLite Source of Truth
+      const sqlProfile = await DataStore.getUserProfile();
+      
+      if (sqlProfile) {
+          setName(sqlProfile.name);
+          setCategory(sqlProfile.category);
+      } else {
+          // Fallback to Legacy if SQL is empty (rare now)
+          const legacyProfile = await AsyncStorage.getItem('user_profile');
+          if (legacyProfile) {
+              const p = JSON.parse(legacyProfile);
+              if (p.name) setName(p.name);
+          }
+          const savedCat = await AsyncStorage.getItem('userCategory');
+          if (savedCat) setCategory(savedCat);
       }
-      const savedCat = await AsyncStorage.getItem('userCategory');
-      if (savedCat) setCategory(savedCat);
     } catch (e) {
       console.log('Failed to load settings');
     }
@@ -39,12 +48,21 @@ export default function Settings() {
 
   const saveSettings = async () => {
     try {
-      const existing = await AsyncStorage.getItem('user_profile');
-      const profile = existing ? JSON.parse(existing) : {};
-      profile.name = name;
+      // [FIX] 1. Get existing profile to preserve un-edited fields (like joined date, level)
+      const currentProfile = await DataStore.getUserProfile();
       
-      await AsyncStorage.setItem('user_profile', JSON.stringify(profile));
-      await AsyncStorage.setItem('userCategory', category);
+      // [FIX] 2. Save to SQLite (This updates Dev Console & Analytics)
+      await DataStore.saveUserProfile({
+          name: name,
+          category: category,
+          // Preserve existing or set defaults
+          level: currentProfile?.level || 'INTERMEDIATE',
+          targetTime: currentProfile?.targetTime || '90',
+          athleteType: currentProfile?.athleteType || 'BALANCED',
+          joined: currentProfile?.joined || new Date().toISOString()
+      });
+      
+      // (DataStore automatically syncs this back to AsyncStorage for legacy compatibility)
       
       Alert.alert('Success', 'Configuration updated.');
     } catch (e) {
@@ -59,7 +77,7 @@ export default function Settings() {
           [
               { text: "Cancel", style: "cancel" },
               { text: "Delete Everything", style: "destructive", onPress: async () => {
-                  // UPDATED: Use DataStore to clear everything including analytics
+                  // Uses the new SQL-aware clearAll
                   await DataStore.clearAll();
                   router.replace('/onboarding');
               }}

@@ -22,6 +22,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 // IMPORT DATA
 import { RaceEvent, Region, UPCOMING_RACES } from './data/races';
 import { ALL_WORKOUTS } from './data/workouts';
+// [NEW] Import DataStore for Unified Persistence
+import { DataStore } from './services/DataStore';
 
 const { width } = Dimensions.get('window');
 
@@ -72,7 +74,7 @@ export default function Onboarding() {
 
   // --- FORM STATE ---
   const [name, setName] = useState('');
-  const [category, setCategory] = useState('MEN_OPEN'); // NEW: Division State
+  const [category, setCategory] = useState('MEN_OPEN'); 
   const [level, setLevel] = useState('INTERMEDIATE');
   
   const [targetRace, setTargetRace] = useState<RaceEvent | null>(null);
@@ -171,25 +173,46 @@ export default function Onboarding() {
   };
 
   const completeOnboarding = async () => {
-    // SAVE PROFILE
-    const profile = { 
-        name: name || 'ATHLETE',
-        level,
-        targetRace, 
-        targetTime: targetTime || '90', 
-        athleteType,
-        joined: new Date().toISOString() 
-    };
-    await AsyncStorage.setItem('user_profile', JSON.stringify(profile));
-    
-    // SAVE CATEGORY (GENDER CONTEXT)
-    await AsyncStorage.setItem('userCategory', category);
+    try {
+        const joinDate = new Date().toISOString();
+        const profileName = name || 'ATHLETE';
+        const profileTarget = targetTime || '90';
 
-    // GENERATE PLAN
-    const initialPlan = generateWeeklyPlan(level);
-    await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(initialPlan));
+        // 1. SAVE TO SQLITE (The New Source of Truth)
+        await DataStore.saveUserProfile({
+            name: profileName,
+            category: category,
+            level: level,
+            targetTime: profileTarget,
+            athleteType: athleteType,
+            joined: joinDate
+        });
 
-    router.replace('/');
+        // 2. PATCH LEGACY DATA (The Bridge)
+        // DataStore resets 'targetRace' to null in its legacy sync. 
+        // We intentionally overwrite it here to keep the Home Screen widget working.
+        const legacyProfile = { 
+            name: profileName,
+            level,
+            targetRace, // <-- Critical: Persist the selected race
+            targetTime: profileTarget, 
+            athleteType,
+            joined: joinDate 
+        };
+        await AsyncStorage.setItem('user_profile', JSON.stringify(legacyProfile));
+        
+        // 3. GENERATE PLAN
+        const initialPlan = generateWeeklyPlan(level);
+        await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(initialPlan));
+
+        // 4. LAUNCH
+        router.replace('/');
+        
+    } catch (e) {
+        console.error("Onboarding Error:", e);
+        // Fallback: Try to navigate anyway
+        router.replace('/');
+    }
   };
 
   // --- STEP 1: IDENTITY ---

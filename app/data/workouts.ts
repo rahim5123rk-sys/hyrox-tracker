@@ -1,4 +1,23 @@
-export const ALL_WORKOUTS = [
+export interface Workout {
+    id: string;
+    title: string;
+    station: string;
+    type: string;
+    level: string;
+    desc: string;
+    estTime: string;
+    steps: string[];
+    rounds: string;
+    stats: { xp: number; runKm: number; sledKm: number; };
+    // [NEW] Smart Load Matrix
+    loads?: {
+        ROOKIE: string;
+        INTERMEDIATE: string;
+        ELITE: string;
+    };
+}
+
+export const ALL_WORKOUTS: Workout[] = [
   // =======================================================
   // 1. HYBRID / FULL RACE SIMULATIONS
   // =======================================================
@@ -8,7 +27,8 @@ export const ALL_WORKOUTS = [
     estTime: '50-60 MINS',
     steps: ['1km Run (Fast)', '50m Sled Push (Heavy)', '1km Run (Fast)', '20 Burpees'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 450, runKm: 8, sledKm: 0.2 } 
+    stats: { xp: 450, runKm: 8, sledKm: 0.2 },
+    loads: { ROOKIE: '102', INTERMEDIATE: '152', ELITE: '202' } // Sled Push Weights
   },
   { 
     id: 'hyb_2', title: 'ENGINE ROOM', station: 'HYBRID', type: 'ENDURANCE', level: 'INTERMEDIATE',
@@ -16,7 +36,8 @@ export const ALL_WORKOUTS = [
     estTime: '45-55 MINS',
     steps: ['1km Run (Race Pace)', '500m Row (Steady)', '1km Run (Race Pace)', '100m Farmers Carry'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 400, runKm: 8, sledKm: 0 }
+    stats: { xp: 400, runKm: 8, sledKm: 0 },
+    loads: { ROOKIE: '16', INTERMEDIATE: '24', ELITE: '32' } // Farmers Carry (per hand)
   },
   { 
     id: 'hyb_3', title: 'ROXZONE SPRINT', station: 'HYBRID', type: 'SPEED', level: 'ELITE',
@@ -24,7 +45,8 @@ export const ALL_WORKOUTS = [
     estTime: '30-40 MINS',
     steps: ['400m Sprint', '15 Wall Balls', '400m Sprint', '10m Sled Pull'],
     rounds: 'Repeat 6 Rounds',
-    stats: { xp: 350, runKm: 4.8, sledKm: 0.06 }
+    stats: { xp: 350, runKm: 4.8, sledKm: 0.06 },
+    loads: { ROOKIE: '4', INTERMEDIATE: '6', ELITE: '9' } // Wall Ball Weight
   },
   { 
     id: 'hyb_4', title: 'THE HALF SIM (A)', station: 'HYBRID', type: 'SIMULATION', level: 'ADVANCED',
@@ -32,7 +54,8 @@ export const ALL_WORKOUTS = [
     estTime: '40-50 MINS',
     steps: ['1km Run', '1000m Ski', '1km Run', '50m Sled Push', '1km Run', '50m Sled Pull', '1km Run', '80m Burpees'],
     rounds: '1 Round For Time',
-    stats: { xp: 500, runKm: 4, sledKm: 0.1 }
+    stats: { xp: 500, runKm: 4, sledKm: 0.1 },
+    loads: { ROOKIE: '75', INTERMEDIATE: '125', ELITE: '175' } // Average Sled Weight
   },
   { 
     id: 'hyb_5', title: 'THE HALF SIM (B)', station: 'HYBRID', type: 'SIMULATION', level: 'ADVANCED',
@@ -40,7 +63,8 @@ export const ALL_WORKOUTS = [
     estTime: '40-50 MINS',
     steps: ['1km Run', '1000m Row', '1km Run', '200m Farmers', '1km Run', '100m Lunges', '1km Run', '100 Wall Balls'],
     rounds: '1 Round For Time',
-    stats: { xp: 500, runKm: 4, sledKm: 0 }
+    stats: { xp: 500, runKm: 4, sledKm: 0 },
+    loads: { ROOKIE: '10', INTERMEDIATE: '20', ELITE: '30' } // Lunge Weight
   },
   { 
     id: 'hyb_6', title: 'LEG COMPROMISE', station: 'HYBRID', type: 'LEGS', level: 'INTERMEDIATE',
@@ -48,11 +72,12 @@ export const ALL_WORKOUTS = [
     estTime: '35-45 MINS',
     steps: ['800m Run', '40 Lunges', '40 Air Squats', '400m Run'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 300, runKm: 4.8, sledKm: 0 }
+    stats: { xp: 300, runKm: 4.8, sledKm: 0 },
+    loads: { ROOKIE: '10', INTERMEDIATE: '20', ELITE: '30' } // Lunge Weight
   },
 
   // =======================================================
-  // 2. SKI ERG PROTOCOLS
+  // 2. SKI ERG PROTOCOLS (No External Load)
   // =======================================================
   { 
     id: 'ski_1', title: 'SKI INTERVALS', station: 'SKI ERG', type: 'POWER', level: 'ALL LEVELS',
@@ -96,7 +121,8 @@ export const ALL_WORKOUTS = [
     estTime: '35-45 MINS',
     steps: ['25m Sled Push (Very Heavy)', '10 Box Jumps', '25m Sled Push', '200m Run'],
     rounds: 'Repeat 5 Rounds',
-    stats: { xp: 300, runKm: 1, sledKm: 0.25 }
+    stats: { xp: 300, runKm: 1, sledKm: 0.25 },
+    loads: { ROOKIE: '125', INTERMEDIATE: '175', ELITE: '225' }
   },
   { 
     id: 'push_2', title: 'SPEED SLEDS', station: 'SLED PUSH', type: 'SPEED', level: 'BEGINNER',
@@ -104,7 +130,8 @@ export const ALL_WORKOUTS = [
     estTime: '25-30 MINS',
     steps: ['15m Sled Sprint (Light)', '50m Sprint Run', '90s Rest'],
     rounds: 'Repeat 8 Rounds',
-    stats: { xp: 150, runKm: 0.4, sledKm: 0.12 }
+    stats: { xp: 150, runKm: 0.4, sledKm: 0.12 },
+    loads: { ROOKIE: '50', INTERMEDIATE: '75', ELITE: '100' }
   },
   { 
     id: 'push_3', title: 'HEAVY PYRAMID', station: 'SLED PUSH', type: 'STRENGTH', level: 'ELITE',
@@ -112,7 +139,8 @@ export const ALL_WORKOUTS = [
     estTime: '20-30 MINS',
     steps: ['15m Push', 'Add 20kg', '90s Rest'],
     rounds: 'Repeat until failure',
-    stats: { xp: 250, runKm: 0, sledKm: 0.1 }
+    stats: { xp: 250, runKm: 0, sledKm: 0.1 },
+    loads: { ROOKIE: '75', INTERMEDIATE: '125', ELITE: '152' } // Starting Weight
   },
   { 
     id: 'push_4', title: 'PUSH & RUN', station: 'SLED PUSH', type: 'HYBRID', level: 'INTERMEDIATE',
@@ -120,7 +148,8 @@ export const ALL_WORKOUTS = [
     estTime: '30-40 MINS',
     steps: ['50m Sled Push (Comp Weight)', '400m Run (Threshold)'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 280, runKm: 1.6, sledKm: 0.2 }
+    stats: { xp: 280, runKm: 1.6, sledKm: 0.2 },
+    loads: { ROOKIE: '102', INTERMEDIATE: '152', ELITE: '202' }
   },
 
   // =======================================================
@@ -132,7 +161,8 @@ export const ALL_WORKOUTS = [
     estTime: '30-40 MINS',
     steps: ['25m Sled Pull', '15 Kettlebell Swings', '25m Sled Pull', '400m Run'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 250, runKm: 1.6, sledKm: 0.2 }
+    stats: { xp: 250, runKm: 1.6, sledKm: 0.2 },
+    loads: { ROOKIE: '78', INTERMEDIATE: '103', ELITE: '153' }
   },
   { 
     id: 'pull_2', title: 'HEAVY ANCHOR', station: 'SLED PULL', type: 'POWER', level: 'ADVANCED',
@@ -140,7 +170,8 @@ export const ALL_WORKOUTS = [
     estTime: '20 MINS',
     steps: ['10m Sled Pull (Max Weight)', '60s Rest'],
     rounds: 'Repeat 10 Rounds',
-    stats: { xp: 200, runKm: 0, sledKm: 0.1 }
+    stats: { xp: 200, runKm: 0, sledKm: 0.1 },
+    loads: { ROOKIE: '100', INTERMEDIATE: '140', ELITE: '180' }
   },
   { 
     id: 'pull_3', title: 'ARM PUMP', station: 'SLED PULL', type: 'ENDURANCE', level: 'BEGINNER',
@@ -148,11 +179,12 @@ export const ALL_WORKOUTS = [
     estTime: '25-35 MINS',
     steps: ['50m Sled Pull (Light)', '20 Pushups'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 180, runKm: 0, sledKm: 0.2 }
+    stats: { xp: 180, runKm: 0, sledKm: 0.2 },
+    loads: { ROOKIE: '50', INTERMEDIATE: '78', ELITE: '103' }
   },
 
   // =======================================================
-  // 5. BURPEE BROAD JUMPS
+  // 5. BURPEE BROAD JUMPS (Bodyweight - No Loads)
   // =======================================================
   { 
     id: 'burp_1', title: 'JUMP CAPACITY', station: 'BURPEES', type: 'EXPLOSIVE', level: 'ADVANCED',
@@ -180,7 +212,7 @@ export const ALL_WORKOUTS = [
   },
 
   // =======================================================
-  // 6. ROWING
+  // 6. ROWING (No External Load)
   // =======================================================
   { 
     id: 'row_1', title: 'ROW FLUSH', station: 'ROWING', type: 'AEROBIC', level: 'BEGINNER',
@@ -224,7 +256,8 @@ export const ALL_WORKOUTS = [
     estTime: '25-30 MINS',
     steps: ['200m Farmers Carry', '1 min Dead Hang', '200m Run (Shake out arms)'],
     rounds: 'Repeat 3 Rounds',
-    stats: { xp: 200, runKm: 0.6, sledKm: 0 }
+    stats: { xp: 200, runKm: 0.6, sledKm: 0 },
+    loads: { ROOKIE: '24', INTERMEDIATE: '32', ELITE: '40' } // Per Hand
   },
   { 
     id: 'farm_2', title: 'TRACK CARRY', station: 'FARMERS', type: 'ENDURANCE', level: 'INTERMEDIATE',
@@ -232,7 +265,8 @@ export const ALL_WORKOUTS = [
     estTime: '35-45 MINS',
     steps: ['400m Run', '100m Farmers Carry', '400m Run'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 250, runKm: 3.2, sledKm: 0 }
+    stats: { xp: 250, runKm: 3.2, sledKm: 0 },
+    loads: { ROOKIE: '16', INTERMEDIATE: '24', ELITE: '32' }
   },
   { 
     id: 'farm_3', title: 'HEAVY HOLD', station: 'FARMERS', type: 'STRENGTH', level: 'ADVANCED',
@@ -240,7 +274,8 @@ export const ALL_WORKOUTS = [
     estTime: '15-20 MINS',
     steps: ['50m Heavy Carry', '30s Rest'],
     rounds: 'Repeat 8 Rounds',
-    stats: { xp: 220, runKm: 0, sledKm: 0 }
+    stats: { xp: 220, runKm: 0, sledKm: 0 },
+    loads: { ROOKIE: '28', INTERMEDIATE: '36', ELITE: '44' }
   },
 
   // =======================================================
@@ -252,7 +287,8 @@ export const ALL_WORKOUTS = [
     estTime: '35-45 MINS',
     steps: ['50m Sandbag Lunges', '400m Run', '50m Sandbag Lunges', '20 Jumping Lunges'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 300, runKm: 1.6, sledKm: 0 }
+    stats: { xp: 300, runKm: 1.6, sledKm: 0 },
+    loads: { ROOKIE: '10', INTERMEDIATE: '20', ELITE: '30' }
   },
   { 
     id: 'lung_2', title: 'COMPROMISED LEGS', station: 'LUNGES', type: 'HYBRID', level: 'INTERMEDIATE',
@@ -260,7 +296,8 @@ export const ALL_WORKOUTS = [
     estTime: '30-40 MINS',
     steps: ['400m Run (Hard)', '30m Lunges (Unweighted)', '400m Run (Hard)'],
     rounds: 'Repeat 5 Rounds',
-    stats: { xp: 280, runKm: 4, sledKm: 0 }
+    stats: { xp: 280, runKm: 4, sledKm: 0 },
+    loads: { ROOKIE: '0', INTERMEDIATE: '10', ELITE: '20' }
   },
   { 
     id: 'lung_3', title: 'GLUTE BURNER', station: 'LUNGES', type: 'STRENGTH', level: 'BEGINNER',
@@ -268,7 +305,8 @@ export const ALL_WORKOUTS = [
     estTime: '20-25 MINS',
     steps: ['20m Lunges', '20 Air Squats', '20 Glute Bridges'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 150, runKm: 0, sledKm: 0 }
+    stats: { xp: 150, runKm: 0, sledKm: 0 },
+    loads: { ROOKIE: '10', INTERMEDIATE: '15', ELITE: '20' }
   },
 
   // =======================================================
@@ -280,7 +318,8 @@ export const ALL_WORKOUTS = [
     estTime: '30-40 MINS',
     steps: ['30 Wall Balls', '10 Burpees', '30 Wall Balls', '200m Run'],
     rounds: 'Repeat 3 Rounds',
-    stats: { xp: 220, runKm: 0.6, sledKm: 0 }
+    stats: { xp: 220, runKm: 0.6, sledKm: 0 },
+    loads: { ROOKIE: '4', INTERMEDIATE: '6', ELITE: '9' }
   },
   { 
     id: 'wall_2', title: 'KAREN BENCHMARK', station: 'WALL BALLS', type: 'THRESHOLD', level: 'ADVANCED',
@@ -288,7 +327,8 @@ export const ALL_WORKOUTS = [
     estTime: '5-10 MINS',
     steps: ['150 Wall Balls for time'],
     rounds: '1 Round',
-    stats: { xp: 300, runKm: 0, sledKm: 0 }
+    stats: { xp: 300, runKm: 0, sledKm: 0 },
+    loads: { ROOKIE: '4', INTERMEDIATE: '6', ELITE: '9' }
   },
   { 
     id: 'wall_3', title: 'EMOM 10', station: 'WALL BALLS', type: 'AEROBIC', level: 'BEGINNER',
@@ -296,7 +336,8 @@ export const ALL_WORKOUTS = [
     estTime: '10 MINS',
     steps: ['10 Wall Balls every minute'],
     rounds: '10 Minutes',
-    stats: { xp: 150, runKm: 0, sledKm: 0 }
+    stats: { xp: 150, runKm: 0, sledKm: 0 },
+    loads: { ROOKIE: '4', INTERMEDIATE: '6', ELITE: '9' }
   },
   { 
     id: 'wall_4', title: 'LEG & LUNG', station: 'WALL BALLS', type: 'HYBRID', level: 'ELITE',
@@ -304,7 +345,8 @@ export const ALL_WORKOUTS = [
     estTime: '35-45 MINS',
     steps: ['400m Run', '40 Wall Balls'],
     rounds: 'Repeat 4 Rounds',
-    stats: { xp: 350, runKm: 1.6, sledKm: 0 }
+    stats: { xp: 350, runKm: 1.6, sledKm: 0 },
+    loads: { ROOKIE: '6', INTERMEDIATE: '9', ELITE: '12' } // Slightly heavier for elite
   },
 
   // =======================================================
@@ -324,7 +366,8 @@ export const ALL_WORKOUTS = [
         '100 Wall Balls'
     ],
     rounds: 'FOR TIME',
-    stats: { xp: 500, runKm: 1, sledKm: 0 } 
+    stats: { xp: 500, runKm: 1, sledKm: 0 },
+    loads: { ROOKIE: '4', INTERMEDIATE: '6', ELITE: '9' } // Wall Ball Weight
   },
   { 
     id: 'pft_2', title: 'RUN TEST (5K)', station: 'BENCHMARK', type: 'TEST', level: 'ALL LEVELS',
@@ -334,5 +377,4 @@ export const ALL_WORKOUTS = [
     rounds: '1 Round',
     stats: { xp: 300, runKm: 5, sledKm: 0 } 
   }
-
 ];

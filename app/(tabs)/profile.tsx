@@ -12,14 +12,22 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RadarChart } from '../../components/RadarChart';
 import { calculateLevel } from '../../utils/gamification';
 import { AnalysisEngine, AnalysisReport } from './../services/AnalysisEngine';
-import { AnalyticsProfile, DataStore, LogEntry } from './../services/DataStore';
+// [IMPORT] METRICS & MetricKey for Type Safety
+import { AnalyticsProfile, DataStore, LogEntry, METRICS, MetricKey } from './../services/DataStore';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-const STATION_KEYS = {
-    'SKI ERG': 'skiErg', 'SLED PUSH': 'sledPush', 'SLED PULL': 'sledPull',
-    'BURPEES': 'burpees', 'ROWING': 'rowing', 'FARMERS': 'farmers',
-    'LUNGES': 'lunges', 'WALL BALLS': 'wallBalls', 'ROXZONE': 'roxzone'
+// [UPDATE] USE METRIC KEYS (No more Magic Strings)
+const STATION_KEYS: Record<string, MetricKey> = {
+    'SKI ERG': METRICS.SKI_ERG,
+    'SLED PUSH': METRICS.SLED_PUSH,
+    'SLED PULL': METRICS.SLED_PULL,
+    'BURPEES': METRICS.BURPEES,
+    'ROWING': METRICS.ROWING,
+    'FARMERS': METRICS.FARMERS,
+    'LUNGES': METRICS.LUNGES,
+    'WALL BALLS': METRICS.WALL_BALLS,
+    'ROXZONE': METRICS.ROXZONE
 };
 
 const STANDARDS_PFT: any = { MEN_PRO: { p1: 14.0, p10: 16.0, p25: 18.0, p50: 20.0 }, MEN_OPEN: { p1: 16.0, p10: 19.0, p25: 22.0, p50: 26.0 }, WOMEN_PRO: { p1: 16.0, p10: 18.0, p25: 20.0, p50: 23.0 }, WOMEN_OPEN:{ p1: 18.0, p10: 22.0, p25: 25.0, p50: 30.0 }};
@@ -63,19 +71,26 @@ export default function Profile() {
       setAnalytics(dossier.analytics);
       setHistory(dossier.history);
 
-      const profile = await AsyncStorage.getItem('user_profile');
-      if (profile) setName(JSON.parse(profile).name?.toUpperCase());
+      // [FIX] LOAD FROM SQLITE SOURCE OF TRUTH
+      const profile = await DataStore.getUserProfile();
+      let category = 'MEN_OPEN'; // Default fallback
 
-      const savedCat = await AsyncStorage.getItem('userCategory');
-      const category = savedCat || 'MEN_OPEN';
-      setCurrentCategory(category);
+      if (profile) {
+          setName(profile.name?.toUpperCase());
+          category = profile.category;
+          setCurrentCategory(category);
+      } else {
+          // Legacy Fallback (Safe to remove later)
+          const legacyName = await AsyncStorage.getItem('user_profile');
+          if (legacyName) setName(JSON.parse(legacyName).name?.toUpperCase());
+      }
 
       const totalXP = dossier.analytics.totalOps * 150;
       setRankData(calculateLevel(totalXP));
       
       calculateBioSignature(dossier.analytics);
       
-      // [FIX] PASS CATEGORY TO GENERATE REPORT
+      // [FIX] PASS CATEGORY TO ENGINE
       const coachReport = AnalysisEngine.generateReport(dossier.analytics, category);
       setReport(coachReport);
 
@@ -113,17 +128,18 @@ export default function Profile() {
       
       const last = (arr: number[]) => (arr && arr.length > 0) ? arr[arr.length - 1] : 0;
 
-      const lastPace = last(stats.trends.runPace) || 360;
+      // [UPDATE] USE METRIC CONSTANTS
+      const lastPace = last(stats.trends[METRICS.RUN_PACE]) || 360;
       const speed = score(lastPace, 240, 420); 
       
-      const lastSled = last(stats.trends.sledPush) || 180;
+      const lastSled = last(stats.trends[METRICS.SLED_PUSH]) || 180;
       const power = score(lastSled, 120, 300); 
       
-      const ski = last(stats.trends.skiErg) || 270;
-      const row = last(stats.trends.rowing) || 270;
+      const ski = last(stats.trends[METRICS.SKI_ERG]) || 270;
+      const row = last(stats.trends[METRICS.ROWING]) || 270;
       const engine = score((ski+row)/2, 230, 360); 
       
-      const lastFatigue = last(stats.trends.fatigueIndex) || 20;
+      const lastFatigue = last(stats.trends[METRICS.FATIGUE]) || 20;
       const grit = Math.max(0, 100 - (lastFatigue * 2)); 
       
       const consistency = stats.consistencyScore || 0;
@@ -133,7 +149,8 @@ export default function Profile() {
   const calculateLineChart = () => {
       if (!analytics) return;
       
-      const count = analytics.trends.runPace.length; 
+      // [UPDATE] USE METRIC CONSTANTS
+      const count = analytics.trends[METRICS.RUN_PACE].length; 
       if (count < 1 && chartMode === 'RACE') { setChartData([0]); return; }
 
       const labels = Array.from({length: Math.max(1, count)}, (_, i) => `R${i+1}`);
@@ -142,13 +159,12 @@ export default function Profile() {
       const sanitize = (val: any) => (val === null || val === undefined || isNaN(val)) ? 0 : val;
 
       if (chartMode === 'RACE') {
-          dataPoints = analytics.trends.runPace.map(x => parseFloat((sanitize(x) / 60).toFixed(2))); 
+          dataPoints = analytics.trends[METRICS.RUN_PACE].map(x => parseFloat((sanitize(x) / 60).toFixed(2))); 
           setInsight({ title: "RUN PACE", value: `${dataPoints[count-1] || '--'}`, sub: "MINS / KM", positive: true });
       } 
       else if (chartMode === 'STATIONS') {
-          // @ts-ignore
+          // [UPDATE] Type-Safe Lookup
           const key = STATION_KEYS[stationFilter];
-          // @ts-ignore
           const raw = analytics.trends[key] || [];
           
           if (raw.length === 0) {
@@ -161,7 +177,7 @@ export default function Profile() {
           }
       } 
       else if (chartMode === 'FATIGUE') {
-          const raw = analytics.trends.fatigueIndex || [];
+          const raw = analytics.trends[METRICS.FATIGUE] || [];
           if (raw.length === 0) {
               dataPoints = [0];
               setInsight({ title: "FATIGUE", value: "--", sub: "NO DATA", positive: false });

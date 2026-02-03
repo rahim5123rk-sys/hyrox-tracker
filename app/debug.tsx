@@ -1,162 +1,142 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DataStore } from './services/DataStore';
+import { DataStore, LogEntry } from './services/DataStore';
+
+// --- DUMMY DATA ---
+const DUMMY_LOG: LogEntry = {
+    id: 'legacy-seed-1',
+    date: new Date().toISOString(),
+    timestamp: Date.now() - 172800000, // 2 days ago
+    type: 'SIMULATION',
+    title: 'LEGACY SEED DATA',
+    totalTime: '65:00',
+    totalSeconds: 3900,
+    sessionType: 'SOLO',
+    splits: [
+        { name: '1km RUN', actual: 250, target: 240 },
+        { name: 'SKI ERG', actual: 250, target: 240 },
+        { name: '1km RUN', actual: 260, target: 240 },
+        { name: 'SLED PUSH', actual: 180, target: 140 }
+    ],
+    details: { note: 'Injected via Debug Console' }
+};
 
 export default function DebugConsole() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [dossier, setDossier] = useState<any>(null);
+  const [consoleLog, setConsoleLog] = useState<string[]>([]);
+  const [dbStats, setDbStats] = useState({ logs: 0, splits: 0, profile: 'MISSING' });
   const [loading, setLoading] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadData();
-    }, [])
-  );
+  useEffect(() => {
+    refreshStats();
+  }, []);
 
-  const loadData = async () => {
-    const data = await DataStore.getFullDossier();
-    setDossier(data);
+  const log = (msg: string) => setConsoleLog(prev => [`[${new Date().toLocaleTimeString().split(' ')[0]}] ${msg}`, ...prev]);
+
+  const refreshStats = async () => {
+    try {
+        // @ts-ignore - Accessing internal DB for diagnostics
+        const db = await DataStore._getDb();
+        const l = await db.getAllAsync('SELECT count(*) as c FROM logs');
+        const s = await db.getAllAsync('SELECT count(*) as c FROM splits');
+        
+        // Profile Check
+        const p = await DataStore.getUserProfile();
+        
+        setDbStats({ 
+            logs: l[0].c, 
+            splits: s[0].c, 
+            profile: p ? `${p.name} (${p.category})` : 'MISSING' 
+        });
+        log("Stats Refreshed.");
+    } catch (e) { log(`Stats Error: ${e}`); }
   };
 
-  const nukeData = async () => {
-      await DataStore.clearAll();
-      loadData();
-      Alert.alert("SYSTEM PURGED", "Database cleared. Analytics engine reset.");
-  };
+  // --- 1. MIGRATION TESTS ---
 
-  // --- ENGINE: GENERATE RACE ---
-  const generateRace = (dateOffset: number, multipliers: any) => {
-      const { runMod, stationMod, fatigueMod } = multipliers;
-      const runBase = 300; // 5:00/km
-      const splits = [];
-
-      // 8 Runs
-      for(let i=1; i<=8; i++) {
-          const fatigue = 1 + ((i - 1) * fatigueMod); 
-          splits.push({ name: `Run ${i}`, actual: Math.round(runBase * runMod * fatigue) });
-      }
-
-      // 8 Stations
-      const stations = [
-          { name: "SKI ERG", base: 240 }, { name: "SLED PUSH", base: 150 }, { name: "SLED PULL", base: 210 },
-          { name: "BURPEES", base: 270 }, { name: "ROWING", base: 250 }, { name: "FARMERS", base: 120 },
-          { name: "LUNGES", base: 240 }, { name: "WALL BALLS", base: 210 }, { name: "ROXZONE", base: 300 }
-      ];
-
-      stations.forEach(s => {
-          splits.push({ name: s.name, actual: Math.round(s.base * stationMod) });
-      });
-
-      // Calc Total
-      const totalSeconds = splits.reduce((acc, s) => acc + s.actual, 0);
-      const m = Math.floor(totalSeconds / 60);
-      const s = totalSeconds % 60;
-
-      return {
-          date: new Date(Date.now() - dateOffset).toISOString(),
-          title: "HYROX SIMULATION",
-          totalTime: `${m}:${s.toString().padStart(2, '0')}`,
-          totalSeconds: totalSeconds,
-          type: "SIMULATION",
-          sessionType: "SIMULATION",
-          splits: splits,
-          details: { hrAvg: 160, rpe: 8 }
-      };
-  };
-
-  // --- SCENARIO RUNNER ---
-  const runScenario = async (name: string, races: any[]) => {
+  const handleSeedLegacy = async () => {
       setLoading(true);
-      await DataStore.clearAll();
-      const oneWeek = 604800000;
-
-      for (let i = 0; i < races.length; i++) {
-          const r = races[i];
-          // Determine time offset (reverse order, so last item is newest)
-          const offset = (races.length - 1 - i) * oneWeek;
-          const log = generateRace(offset, r);
-          await DataStore.logEvent(log);
-      }
-
-      await loadData();
+      const history = Array(5).fill(DUMMY_LOG).map((l, i) => ({ 
+          ...l, 
+          id: `legacy-${i}-${Date.now()}`,
+          timestamp: Date.now() - (i * 86400000) 
+      }));
+      await AsyncStorage.setItem('raceHistory', JSON.stringify(history));
+      log(`Success: 5 Legacy Logs written to AsyncStorage.`);
+      log("Action: Click 'Force SQL Migration' to import them.");
       setLoading(false);
-      Alert.alert("SCENARIO LOADED", `${name} data injected.`);
   };
 
-  // --- SCENARIOS ---
-
-  // 1. THE "RUNNER" (Fast Runs, Weak Stations)
-  const injectRunner = () => runScenario("THE RUNNER", [
-      { runMod: 0.85, stationMod: 1.3, fatigueMod: 0.02 }, // Fast run, slow stations
-      { runMod: 0.84, stationMod: 1.28, fatigueMod: 0.02 },
-      { runMod: 0.82, stationMod: 1.25, fatigueMod: 0.02 },
-  ]);
-
-  // 2. THE "TANK" (Slow Runs, Elite Strength)
-  const injectTank = () => runScenario("THE TANK", [
-      { runMod: 1.2, stationMod: 0.8, fatigueMod: 0.05 }, // Slow run, fast sleds
-      { runMod: 1.18, stationMod: 0.78, fatigueMod: 0.05 },
-      { runMod: 1.15, stationMod: 0.75, fatigueMod: 0.05 },
-  ]);
-
-  // 3. PERFECT TAPER (Fatigue -> Peak)
-  const injectTaper = () => runScenario("THE TAPER", [
-      { runMod: 1.1, stationMod: 1.1, fatigueMod: 0.1 }, // Week 1: Tired
-      { runMod: 1.08, stationMod: 1.08, fatigueMod: 0.08 },
-      { runMod: 1.05, stationMod: 1.05, fatigueMod: 0.05 },
-      { runMod: 0.95, stationMod: 0.95, fatigueMod: 0.0 }, // Week 4: PEAK
-  ]);
-
-  // 4. THE BONK (Good start, horrible finish)
-  const injectBonk = () => runScenario("THE BONK", [
-      { runMod: 0.9, stationMod: 0.9, fatigueMod: 0.15 }, // 15% degradation/run
-      { runMod: 0.9, stationMod: 0.9, fatigueMod: 0.18 }, // Getting worse
-      { runMod: 0.9, stationMod: 0.9, fatigueMod: 0.20 }, // 20% degradation
-  ]);
-
-  // 5. OVERTRAINING (Getting slower every week)
-  const injectOvertraining = () => runScenario("OVERTRAINING", [
-      { runMod: 1.0, stationMod: 1.0, fatigueMod: 0.02 }, // Week 1: Good
-      { runMod: 1.05, stationMod: 1.05, fatigueMod: 0.05 }, // Week 2: Slower
-      { runMod: 1.10, stationMod: 1.10, fatigueMod: 0.08 }, // Week 3: Tired
-      { runMod: 1.15, stationMod: 1.15, fatigueMod: 0.12 }, // Week 4: Burnout
-  ]);
-
-  // 6. CONSISTENCY KING (Flat lines)
-  const injectConsistency = () => runScenario("ROBOT", [
-      { runMod: 1.0, stationMod: 1.0, fatigueMod: 0.0 },
-      { runMod: 1.0, stationMod: 1.0, fatigueMod: 0.0 },
-      { runMod: 1.0, stationMod: 1.0, fatigueMod: 0.0 },
-      { runMod: 1.0, stationMod: 1.0, fatigueMod: 0.0 },
-  ]);
-
-  // 7. SIMULATE TRAINING LAB (Specific Workout Test)
-  const injectLabWorkout = async () => {
+  const handleForceMigration = async () => {
       setLoading(true);
-      // Mimic "SKI INTERVALS"
-      const log = {
-          date: new Date().toISOString(),
-          title: "SKI INTERVALS",
-          totalTime: "30:00",
-          totalSeconds: 1800,
-          type: "WORKOUT",
-          sessionType: "TRAINING",
-          splits: [
-              { name: "250m SkiErg (Sprint)", actual: 45 },
-              { name: "Rest", actual: 90 },
-              { name: "250m SkiErg (Sprint)", actual: 44 },
-              { name: "Rest", actual: 90 },
-              { name: "250m SkiErg (Sprint)", actual: 42 },
-          ]
-      };
-      await DataStore.logEvent(log);
-      await loadData();
+      log("Starting Migration...");
+      // @ts-ignore
+      await DataStore._migrateFromLegacy();
+      log("Migration Routine Completed.");
+      await refreshStats();
       setLoading(false);
-      Alert.alert("LAB INJECTED", "Added 'Ski Intervals'. Check 'Ski Erg' chart in Profile.");
+  };
+
+  // --- 2. RELIABILITY TESTS ---
+
+  const injectCrash = async (stationIndex: number, stationName: string) => {
+      const crashState = {
+          savedAt: Date.now(), // Crash happened JUST NOW
+          category: 'MEN_OPEN',
+          goalMinutes: 90,
+          bias: 'BALANCED',
+          history: [
+              { name: '1km RUN', actual: 240, target: 240 },
+              { name: 'SKI ERG', actual: 240, target: 240 },
+          ],
+          index: stationIndex, 
+          raceStartRef: Date.now() - (stationIndex * 300000), // Fake start time
+          stationStartRef: Date.now() - 30000 // Fake station start
+      };
+      await AsyncStorage.setItem('hyrox_race_recovery_state', JSON.stringify(crashState));
+      log(`CRASH INJECTED @ ${stationName}`);
+      
+      Alert.alert(
+          "CRASH SIMULATED", 
+          `App state set to 'Crashed at ${stationName}'.\n\nGo to Race Calculator -> Launch to test recovery.`,
+          [{ text: "Go to Race", onPress: () => router.push('/race?goalMinutes=90') }, { text: "Stay Here" }]
+      );
+  };
+
+  // --- 3. ANALYTICS TESTS ---
+
+  const handleBenchmark = async () => {
+      setLoading(true);
+      log("Running SQL Analytics Engine...");
+      const start = performance.now();
+      // @ts-ignore
+      const stats = await DataStore._refreshAnalytics();
+      const end = performance.now();
+      
+      log(`COMPLETED IN ${(end - start).toFixed(2)}ms`);
+      log(`Total Ops: ${stats.totalOps}`);
+      log(`Run Volume: ${stats.totalRunDistance}km`);
+      log(`Consistency: ${stats.consistencyScore}%`);
+      setLoading(false);
+  };
+
+  // --- 4. DATA DESTRUCTION ---
+
+  const handleNuke = async () => {
+      Alert.alert("NUCLEAR LAUNCH DETECTED", "This will wipe the SQLite Database and AsyncStorage. There is no undo.", [
+          { text: "ABORT" },
+          { text: "EXECUTE", style: 'destructive', onPress: async () => {
+              await DataStore.clearAll();
+              await AsyncStorage.clear(); // Total wipe
+              log("SYSTEM PURGED.");
+              refreshStats();
+          }}
+      ]);
   };
 
   return (
@@ -164,65 +144,80 @@ export default function DebugConsole() {
       <StatusBar barStyle="light-content" />
       
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.btn}>
-            <Ionicons name="arrow-back" size={24} color="#fff" />
+        <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
+            <Ionicons name="close" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.title}>SIMULATION <Text style={{color: '#FF453A'}}>SUITE</Text></Text>
-        <TouchableOpacity onPress={loadData} style={styles.btn}>
-            <Ionicons name="refresh" size={24} color="#FFD700" />
-        </TouchableOpacity>
+        <Text style={styles.title}>COMMANDER CONSOLE v7.5</Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 50 }}>
+      <ScrollView contentContainerStyle={styles.content}>
           
-          <Text style={styles.sectionHeader}>ARCHETYPES</Text>
-          <View style={styles.grid}>
-              <TouchableOpacity style={styles.btn} onPress={injectRunner}>
-                  <Text style={styles.btnText}>THE RUNNER</Text>
-                  <Text style={styles.btnSub}>Fast Run / Slow Strength</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={injectTank}>
-                  <Text style={styles.btnText}>THE TANK</Text>
-                  <Text style={styles.btnSub}>Slow Run / Elite Strength</Text>
-              </TouchableOpacity>
+          {/* STATS DASHBOARD */}
+          <View style={styles.statsRow}>
+              <View style={styles.statBox}>
+                  <Text style={styles.statVal}>{dbStats.logs}</Text>
+                  <Text style={styles.statLabel}>SQL LOGS</Text>
+              </View>
+              <View style={styles.statBox}>
+                  <Text style={styles.statVal}>{dbStats.splits}</Text>
+                  <Text style={styles.statLabel}>SQL SPLITS</Text>
+              </View>
+          </View>
+          <View style={[styles.statBox, {marginBottom: 30, borderColor: dbStats.profile === 'MISSING' ? '#FF453A' : '#32D74B'}]}>
+               <Text style={[styles.statVal, {fontSize: 14}]}>{dbStats.profile}</Text>
+               <Text style={styles.statLabel}>ACTIVE PROFILE</Text>
           </View>
 
-          <Text style={styles.sectionHeader}>TRENDS & ANOMALIES</Text>
-          <View style={styles.grid}>
-              <TouchableOpacity style={styles.btn} onPress={injectTaper}>
-                  <Text style={styles.btnText}>PERFECT TAPER</Text>
-                  <Text style={styles.btnSub}>Fatigue → Peak</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={injectOvertraining}>
-                  <Text style={styles.btnText}>OVERTRAINING</Text>
-                  <Text style={styles.btnSub}>Performance Decay</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={injectBonk}>
-                  <Text style={styles.btnText}>THE BONK</Text>
-                  <Text style={styles.btnSub}>High Fatigue Index</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.btn} onPress={injectConsistency}>
-                  <Text style={styles.btnText}>THE ROBOT</Text>
-                  <Text style={styles.btnSub}>Zero Deviation</Text>
-              </TouchableOpacity>
+          {/* ACTIONS */}
+          <Text style={styles.sectionTitle}>MIGRATION PROTOCOLS</Text>
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={[styles.btn, {flex:1}]} onPress={handleSeedLegacy}>
+                <Text style={styles.btnText}>SEED LEGACY JSON</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.btn, {flex:1, backgroundColor: '#003300', borderColor: '#005500'}]} onPress={handleForceMigration}>
+                <Text style={styles.btnText}>RUN IMPORT</Text>
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.sectionHeader}>INTEGRATION TESTS</Text>
-          <TouchableOpacity style={[styles.btn, {backgroundColor: '#333'}]} onPress={injectLabWorkout}>
-              <Ionicons name="flask" size={20} color="#FFD700" style={{marginBottom:5}}/>
-              <Text style={[styles.btnText, {color: '#FFD700'}]}>SIMULATE LAB: SKI INTERVALS</Text>
-              <Text style={styles.btnSub}>Tests if Training Lab affects Analytics</Text>
+          <Text style={styles.sectionTitle}>CRASH SIMULATION</Text>
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={[styles.btn, {flex:1}]} onPress={() => injectCrash(2, 'STATION 3 (SLED)')}>
+                <Text style={styles.btnText}>CRASH @ SLED</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.btn, {flex:1}]} onPress={() => injectCrash(8, 'RUN 5')}>
+                <Text style={styles.btnText}>CRASH @ RUN 5</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.sectionTitle}>PERFORMANCE BENCHMARK</Text>
+          <TouchableOpacity style={[styles.btn, {borderColor: '#FFD700'}]} onPress={handleBenchmark}>
+              <Text style={[styles.btnText, {color: '#FFD700'}]}>RUN ANALYTICS ENGINE (SQL)</Text>
           </TouchableOpacity>
 
-          <View style={{height: 30}} />
-          <TouchableOpacity style={styles.nukeBtn} onPress={nukeData}>
-              <Text style={styles.nukeText}>NUKE DATABASE</Text>
+          <Text style={styles.sectionTitle}>DANGER ZONE</Text>
+          <TouchableOpacity style={[styles.btn, {borderColor: '#FF453A', backgroundColor: '#330000'}]} onPress={handleNuke}>
+              <Text style={[styles.btnText, {color: '#FF453A'}]}>FACTORY RESET (WIPE DATA)</Text>
           </TouchableOpacity>
-
-          <Text style={styles.jsonHeader}>RAW ANALYTICS DUMP</Text>
-          <Text style={styles.json}>
-              {dossier ? JSON.stringify(dossier.analytics, null, 2) : "NO DATA"}
-          </Text>
+          
+          {/* CONSOLE */}
+          <View style={styles.consoleBox}>
+              <View style={{flexDirection:'row', justifyContent:'space-between', marginBottom: 10}}>
+                <Text style={styles.consoleTitle}>SYSTEM LOG</Text>
+                <TouchableOpacity onPress={() => setConsoleLog([])}><Text style={{color:'#666', fontSize:10}}>CLEAR</Text></TouchableOpacity>
+              </View>
+              <ScrollView nestedScrollEnabled style={{height: 180}}>
+                  {consoleLog.length === 0 && <Text style={{color:'#444', fontStyle:'italic', fontSize:10}}>Waiting for commands...</Text>}
+                  {consoleLog.map((L, i) => (
+                      <Text key={i} style={styles.consoleText}>{L}</Text>
+                  ))}
+              </ScrollView>
+          </View>
+          
+          {/* NAVIGATION SHORTCUTS */}
+          <View style={{flexDirection: 'row', justifyContent: 'center', gap: 20, marginTop: 20}}>
+              <TouchableOpacity onPress={() => router.push('/onboarding')}><Text style={styles.link}>Go To Onboarding</Text></TouchableOpacity>
+              <TouchableOpacity onPress={() => router.push('/(tabs)/history')}><Text style={styles.link}>Go To Logbook</Text></TouchableOpacity>
+          </View>
 
       </ScrollView>
     </View>
@@ -231,19 +226,24 @@ export default function DebugConsole() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 15, borderBottomWidth: 1, borderColor: '#333' },
-  title: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 1 },
+  header: { flexDirection: 'row', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#222' },
+  closeBtn: { marginRight: 15 },
+  title: { color: '#fff', fontSize: 16, fontWeight: '900', letterSpacing: 1 },
+  content: { padding: 20, paddingBottom: 50 },
   
-  sectionHeader: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 10, marginTop: 10, letterSpacing: 1 },
+  statsRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  statBox: { flex: 1, backgroundColor: '#111', padding: 15, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  statVal: { color: '#fff', fontSize: 20, fontWeight: '900', fontFamily: 'Courier' },
+  statLabel: { color: '#666', fontSize: 10, fontWeight: 'bold', marginTop: 5 },
+
+  sectionTitle: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 10, marginTop: 20, letterSpacing: 1 },
+  btnRow: { flexDirection: 'row', gap: 10 },
+  btn: { padding: 15, backgroundColor: '#1A1A1A', borderRadius: 10, borderWidth: 1, borderColor: '#333', marginBottom: 10 },
+  btnText: { color: '#fff', fontSize: 11, fontWeight: 'bold', textAlign: 'center' },
+
+  consoleBox: { backgroundColor: '#111', borderRadius: 12, padding: 15, marginTop: 30, borderWidth: 1, borderColor: '#333' },
+  consoleTitle: { color: '#FFD700', fontSize: 10, fontWeight: '900' },
+  consoleText: { color: '#ccc', fontFamily: 'Courier', fontSize: 10, marginBottom: 4 },
   
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  btn: { width: '48%', backgroundColor: '#1E1E1E', padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#333', marginBottom: 10, alignItems: 'center' },
-  btnText: { color: '#fff', fontSize: 12, fontWeight: '900', textAlign: 'center' },
-  btnSub: { color: '#666', fontSize: 10, marginTop: 4, textAlign: 'center' },
-
-  nukeBtn: { backgroundColor: 'rgba(255, 69, 58, 0.15)', padding: 15, borderRadius: 12, alignItems: 'center', borderWidth: 1, borderColor: '#FF453A', marginBottom: 30 },
-  nukeText: { color: '#FF453A', fontWeight: '900', letterSpacing: 1 },
-
-  jsonHeader: { color: '#FFD700', fontSize: 12, fontWeight: '900', marginBottom: 10 },
-  json: { color: '#00FF00', fontFamily: 'Courier', fontSize: 10, backgroundColor: '#111', padding: 10, borderRadius: 8 }
+  link: { color: '#FFD700', fontSize: 12, textDecorationLine: 'underline', fontWeight: 'bold' }
 });

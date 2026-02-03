@@ -10,23 +10,21 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { EXERCISE_LIBRARY, Exercise } from './data/exercises';
 import { ALL_WORKOUTS } from './data/workouts';
 
-// ADDED "BENCHMARKS" TO FILTERS
 const FILTERS = ["ALL", "CUSTOM", "BENCHMARKS", "HYBRID", "SKI ERG", "SLED PUSH", "SLED PULL", "BURPEES", "ROWING", "FARMERS", "LUNGES", "WALL BALLS"];
 
-// TACTICAL COLOR SYSTEM
 const getStationColor = (station: string) => {
   switch (station) {
-    case 'BENCHMARK': return '#FF453A'; // Tactical Red (Tests)
-    case 'HYBRID': return '#FFD700'; // Gold
-    case 'SLED PUSH': return '#FF3B30'; // Red
-    case 'SLED PULL': return '#FF453A'; // Red-Orange
-    case 'SKI ERG': return '#32D74B'; // Neon Green
-    case 'ROWING': return '#0A84FF'; // Blue
-    case 'WALL BALLS': return '#BF5AF2'; // Purple
-    case 'BURPEES': return '#EBEBF5'; // White
-    case 'FARMERS': return '#FF9F0A'; // Orange
-    case 'LUNGES': return '#FFD60A'; // Dark Yellow
-    case 'CUSTOM': return '#64D2FF'; // Cyan
+    case 'BENCHMARK': return '#FF453A'; 
+    case 'HYBRID': return '#FFD700'; 
+    case 'SLED PUSH': return '#FF3B30'; 
+    case 'SLED PULL': return '#FF453A'; 
+    case 'SKI ERG': return '#32D74B'; 
+    case 'ROWING': return '#0A84FF'; 
+    case 'WALL BALLS': return '#BF5AF2'; 
+    case 'BURPEES': return '#EBEBF5'; 
+    case 'FARMERS': return '#FF9F0A'; 
+    case 'LUNGES': return '#FFD60A'; 
+    case 'CUSTOM': return '#64D2FF'; 
     default: return '#8E8E93'; 
   }
 };
@@ -88,7 +86,6 @@ export default function Templates() {
 
   const fullLibrary = [...customWorkouts, ...ALL_WORKOUTS];
   
-  // FILTER LOGIC: If "BENCHMARKS" is selected, match 'BENCHMARK' station.
   const filteredWorkouts = activeFilter === "ALL" 
     ? fullLibrary 
     : fullLibrary.filter(w => (activeFilter === "BENCHMARKS" ? w.station === 'BENCHMARK' : w.station === activeFilter));
@@ -96,6 +93,20 @@ export default function Templates() {
   const searchResults = buildSearch.length > 0 
     ? EXERCISE_LIBRARY.filter((e: Exercise) => e.name.toLowerCase().includes(buildSearch.toLowerCase())) 
     : EXERCISE_LIBRARY;
+
+  // [NEW] SMART LAUNCH LOGIC
+  const handleLaunchMission = () => {
+      if (!selectedWorkout) return;
+      
+      // Close Modal first
+      setSelectedWorkout(null);
+
+      // Route through Mission Brief for Pre-Flight Check
+      router.push({
+          pathname: '/mission_brief',
+          params: { workoutId: selectedWorkout.id }
+      });
+  };
 
   return (
     <View style={styles.container}>
@@ -289,21 +300,15 @@ export default function Templates() {
                             </View>
                         ))}
                     </ScrollView>
-                    <TouchableOpacity style={[styles.startBtn, {backgroundColor: getStationColor(selectedWorkout.station)}]} onPress={() => {
-                        router.push({
-                            pathname: '/workout_active',
-                            params: { 
-                                sessionId: selectedWorkout.id, // Pass ID for tracking
-                                title: selectedWorkout.title, 
-                                steps: JSON.stringify(selectedWorkout.steps),
-                                rounds: String(selectedWorkout.rounds),
-                                type: selectedWorkout.type
-                            }
-                        });
-                        setSelectedWorkout(null);
-                    }}>
+                    
+                    {/* [UPDATED] Uses Smart Launch Logic */}
+                    <TouchableOpacity 
+                        style={[styles.startBtn, {backgroundColor: getStationColor(selectedWorkout.station)}]} 
+                        onPress={handleLaunchMission}
+                    >
                         <Text style={styles.startBtnText}>START MISSION</Text>
                     </TouchableOpacity>
+                    
                     <TouchableOpacity onPress={() => setSelectedWorkout(null)} style={styles.cancelBtn}>
                         <Text style={styles.cancelText}>ABORT</Text>
                     </TouchableOpacity>

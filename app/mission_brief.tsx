@@ -1,155 +1,102 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import React, { useMemo } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { TrainingSession } from '../utils/TrainingEngine';
+import { ALL_WORKOUTS } from './data/workouts';
 
 export default function MissionBrief() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
-  // --- CRASH PROOF LOGIC ---
-  // Replaced useState/useEffect with useMemo.
-  // This calculates the session ONLY when the params string changes.
-  // No state updates = No re-render loops.
-  const session = useMemo(() => {
-    if (!params.session || typeof params.session !== 'string') return null;
-    try {
-        return JSON.parse(params.session) as TrainingSession;
-    } catch (e) {
-        console.error("Failed to parse mission data", e);
-        return null;
-    }
-  }, [params.session]); // Dependency is the string value, not the object
+  const workoutId = params.workoutId as string;
+  const workout = ALL_WORKOUTS.find(w => w.id === workoutId);
 
-  // Safety Fallback if parsing failed
-  if (!session) {
-      return (
-        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-            <Text style={{color: '#fff'}}>Loading Mission Data...</Text>
-            <TouchableOpacity onPress={() => router.back()} style={{marginTop: 20, padding: 10}}>
-                <Text style={{color: '#FFD700'}}>Return to Base</Text>
-            </TouchableOpacity>
-        </View>
-      );
-  }
+  if (!workout) return null;
 
-  const isRecovery = session.type === 'RECOVERY';
-
-  const handleExecute = () => {
-    // Pass strictly necessary data to avoid bloated params
-    router.replace({
-        pathname: '/workout_active',
-        params: {
-            sessionId: session.id, // ID for ticking off the plan later
-            title: session.title,
-            steps: JSON.stringify(session.steps),
-            rounds: session.rounds,
-            type: session.type
-        }
-    });
+  const handleLaunch = () => {
+      // Direct Launch - Weights are handled inside the active workout now
+      router.replace({ 
+          pathname: '/workout_active', 
+          params: { 
+              steps: JSON.stringify(workout.steps), 
+              rounds: workout.rounds, 
+              title: workout.title,
+              sessionId: params.sessionId
+          } 
+      });
   };
 
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
-      
-      {/* HERO HEADER */}
-      <View style={styles.heroHeader}>
-        <View style={[styles.headerOverlay, { opacity: isRecovery ? 0.2 : 0.6 }]} />
-        <View style={[styles.headerContent, { paddingTop: insets.top + 20 }]}>
-            <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-                <Ionicons name="arrow-back" size={24} color="#fff" />
-            </TouchableOpacity>
-            
-            <View style={styles.badgeContainer}>
-                <View style={[styles.typeBadge, { backgroundColor: isRecovery ? '#333' : '#FFD700' }]}>
-                    <Text style={[styles.typeText, { color: isRecovery ? '#fff' : '#000' }]}>{session.type}</Text>
-                </View>
-                <Text style={styles.durationText}>{session.duration} MINS</Text>
-            </View>
-
-            <Text style={styles.title}>{session.title}</Text>
-            <Text style={styles.intent}>"{session.intent}"</Text>
-        </View>
-      </View>
-
-      <ScrollView style={styles.content} contentContainerStyle={{paddingBottom: 100}} showsVerticalScrollIndicator={false}>
+      <StatusBar barStyle="light-content" />
+      <Image source={{ uri: 'https://images.unsplash.com/photo-1517963879466-e1b54ebd6694?q=80&w=1000' }} style={[StyleSheet.absoluteFill, { opacity: 0.4 }]} />
+      <View style={[styles.gradientOverlay, { paddingTop: insets.top }]}>
         
-        {/* STATS GRID */}
-        <View style={styles.statsRow}>
-            <View style={styles.statBox}>
-                <Text style={styles.statLabel}>INTENSITY</Text>
-                <Text style={[styles.statValue, { color: isRecovery ? '#32D74B' : '#FFD700' }]}>RPE {session.rpeTarget}</Text>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.statBox}>
-                <Text style={styles.statLabel}>STRUCTURE</Text>
-                <Text style={styles.statValue}>{session.rounds}</Text>
-            </View>
-        </View>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+            <Ionicons name="close-circle" size={32} color="#fff" />
+        </TouchableOpacity>
 
-        {/* MISSION STEPS */}
-        <Text style={styles.sectionTitle}>PROTOCOL STEPS</Text>
-        <View style={styles.stepsContainer}>
-            {session.steps.map((step, idx) => (
-                <View key={idx} style={styles.stepRow}>
-                    <View style={styles.stepIndex}>
-                        <Text style={styles.indexText}>{idx + 1}</Text>
-                    </View>
-                    <Text style={styles.stepText}>{step}</Text>
+        <View style={styles.content}>
+            <View style={styles.badge}><Text style={styles.badgeText}>{workout.level}</Text></View>
+            <Text style={styles.title}>{workout.title}</Text>
+            <Text style={styles.station}>{workout.station}</Text>
+            
+            <View style={styles.metaRow}>
+                <View style={styles.metaBox}>
+                    <Ionicons name="repeat" size={24} color="#FFD700" />
+                    <Text style={styles.metaVal}>{workout.rounds}</Text>
+                    <Text style={styles.metaLabel}>ROUNDS</Text>
                 </View>
-            ))}
+                <View style={styles.metaBox}>
+                    <Ionicons name="time" size={24} color="#FFD700" />
+                    <Text style={styles.metaVal}>{workout.estTime}</Text>
+                    <Text style={styles.metaLabel}>EST TIME</Text>
+                </View>
+            </View>
+
+            <ScrollView style={styles.descBox} contentContainerStyle={{paddingBottom: 40}}>
+                <Text style={styles.descTitle}>MISSION BRIEFING</Text>
+                <Text style={styles.descText}>{workout.desc}</Text>
+                
+                <Text style={[styles.descTitle, {marginTop: 20}]}>SEQUENCE OF EVENTS</Text>
+                {workout.steps.map((step, i) => (
+                    <View key={i} style={styles.stepRow}>
+                        <Text style={styles.stepNum}>{i+1}</Text>
+                        <Text style={styles.stepText}>{step}</Text>
+                    </View>
+                ))}
+            </ScrollView>
         </View>
 
-      </ScrollView>
-
-      {/* ACTION FOOTER */}
-      <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
-        <TouchableOpacity style={styles.engageBtn} onPress={handleExecute}>
-            <Text style={styles.engageText}>{isRecovery ? "START RECOVERY" : "INITIATE WORKOUT"}</Text>
-            <Ionicons name="arrow-forward" size={20} color="#000" />
+        <TouchableOpacity style={styles.launchBtn} onPress={handleLaunch}>
+            <Text style={styles.launchText}>INITIATE MISSION</Text>
+            <Ionicons name="arrow-forward" size={24} color="#000" />
         </TouchableOpacity>
       </View>
-
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  heroHeader: { height: 280, backgroundColor: '#1A1A1A', borderBottomLeftRadius: 30, borderBottomRightRadius: 30, overflow: 'hidden' },
-  headerOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: '#000' },
-  headerContent: { padding: 25, flex: 1, justifyContent: 'flex-end' },
-  backBtn: { position: 'absolute', top: 60, left: 25, padding: 5 },
-  
-  badgeContainer: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 15 },
-  typeBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6 },
-  typeText: { fontSize: 10, fontWeight: '900', letterSpacing: 1 },
-  durationText: { color: '#888', fontSize: 10, fontWeight: 'bold' },
-
-  title: { color: '#fff', fontSize: 32, fontWeight: '900', fontStyle: 'italic', marginBottom: 8, lineHeight: 32 },
-  intent: { color: '#ccc', fontSize: 14, fontStyle: 'italic', opacity: 0.8 },
-
-  content: { flex: 1, padding: 25 },
-  
-  statsRow: { flexDirection: 'row', backgroundColor: '#161616', padding: 20, borderRadius: 16, marginBottom: 30, borderWidth: 1, borderColor: '#333' },
-  statBox: { flex: 1, alignItems: 'center' },
-  statLabel: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 5 },
-  statValue: { color: '#fff', fontSize: 16, fontWeight: '900' },
-  statDivider: { width: 1, backgroundColor: '#333' },
-
-  sectionTitle: { color: '#fff', fontSize: 14, fontWeight: '900', marginBottom: 15, letterSpacing: 1 },
-  stepsContainer: { gap: 10 },
-  stepRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 12, borderWidth: 1, borderColor: '#222' },
-  stepIndex: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#222', justifyContent: 'center', alignItems: 'center', marginRight: 15 },
-  indexText: { color: '#666', fontSize: 12, fontWeight: 'bold' },
-  stepText: { color: '#fff', fontSize: 14, fontWeight: '600', flex: 1 },
-
-  footer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: 25, backgroundColor: '#000', borderTopWidth: 1, borderTopColor: '#1A1A1A', paddingTop: 20 },
-  engageBtn: { backgroundColor: '#FFD700', padding: 18, borderRadius: 16, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10 },
-  engageText: { color: '#000', fontSize: 16, fontWeight: '900', letterSpacing: 1 }
+  gradientOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 20 },
+  backBtn: { alignSelf: 'flex-start', marginBottom: 20 },
+  content: { flex: 1 },
+  badge: { backgroundColor: '#FFD700', alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 4, marginBottom: 10 },
+  badgeText: { color: '#000', fontWeight: 'bold', fontSize: 10 },
+  title: { color: '#fff', fontSize: 36, fontWeight: '900', fontStyle: 'italic', lineHeight: 36 },
+  station: { color: '#ccc', fontSize: 14, fontWeight: 'bold', letterSpacing: 2, marginBottom: 30 },
+  metaRow: { flexDirection: 'row', gap: 15, marginBottom: 30 },
+  metaBox: { flex: 1, backgroundColor: 'rgba(255,255,255,0.1)', padding: 15, borderRadius: 12, alignItems: 'center' },
+  metaVal: { color: '#fff', fontSize: 18, fontWeight: '900', marginTop: 5 },
+  metaLabel: { color: '#888', fontSize: 10, fontWeight: 'bold' },
+  descBox: { flex: 1 },
+  descTitle: { color: '#FFD700', fontSize: 12, fontWeight: '900', letterSpacing: 1, marginBottom: 10 },
+  descText: { color: '#ddd', fontSize: 14, lineHeight: 22 },
+  stepRow: { flexDirection: 'row', gap: 15, marginBottom: 12 },
+  stepNum: { color: '#666', fontWeight: '900', fontSize: 14, width: 20 },
+  stepText: { color: '#fff', fontSize: 14, fontWeight: 'bold', flex: 1 },
+  launchBtn: { backgroundColor: '#FFD700', flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10, padding: 20, borderRadius: 16, marginBottom: 40 },
+  launchText: { color: '#000', fontSize: 18, fontWeight: '900', letterSpacing: 1 },
 });
