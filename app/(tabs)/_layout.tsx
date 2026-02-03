@@ -26,7 +26,7 @@ export default function TabLayout() {
         }
       }}
     >
-      {/* 1. ENGINE (Far Left - Flash Icon) */}
+      {/* 1. ENGINE */}
       <Tabs.Screen
         name="index"
         options={{
@@ -35,7 +35,7 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 2. INTEL (Second from Left - Compass Icon) */}
+      {/* 2. INTEL */}
       <Tabs.Screen
         name="discover"
         options={{
@@ -44,7 +44,7 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 3. LOGBOOK (History - Time Icon) */}
+      {/* 3. LOGBOOK */}
       <Tabs.Screen
         name="history"
         options={{
@@ -53,7 +53,7 @@ export default function TabLayout() {
         }}
       />
 
-      {/* 4. PROFILE (Far Right - Person Icon) */}
+      {/* 4. PROFILE */}
       <Tabs.Screen
         name="profile"
         options={{
@@ -63,13 +63,12 @@ export default function TabLayout() {
       />
 
       {/* --- HIDDEN SUB-PAGES --- */}
-      <Tabs.Screen name="guide" options={{ href: null }} />
-      <Tabs.Screen name="calendar" options={{ href: null }} /> 
-      <Tabs.Screen name="templates" options={{ href: null }} />
+      {/* ONLY include files that actually exist inside app/(tabs)/ */}
       
-      {/* Hide old file names to prevent duplicates if they still exist */}
-      <Tabs.Screen name="career" options={{ href: null }} />
-      <Tabs.Screen name="progress" options={{ href: null }} />
+      <Tabs.Screen name="guide" options={{ href: null }} />
+
+      {/* REMOVED: calendar, templates, career, progress */}
+      {/* These are in the ROOT app/ folder now, so they don't belong in this Tab config. */}
 
     </Tabs>
   );

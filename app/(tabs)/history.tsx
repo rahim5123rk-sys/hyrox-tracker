@@ -4,6 +4,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { Alert, FlatList, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DataStore } from '../services/DataStore';
 
 export default function History() {
   const router = useRouter();
@@ -19,10 +20,8 @@ export default function History() {
 
   const loadHistory = async () => {
     try {
-      const json = await AsyncStorage.getItem('raceHistory');
-      if (json) {
-        setHistory(JSON.parse(json));
-      }
+      const data = await DataStore.getHistory();
+    setHistory(data);
     } catch (e) {
       console.log("Failed to load history");
     }

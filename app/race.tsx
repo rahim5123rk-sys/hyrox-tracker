@@ -3,8 +3,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
 import { useEffect, useState } from 'react';
+
 import { Dimensions, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DataStore } from './services/DataStore';
+
 
 const { width } = Dimensions.get('window');
 
@@ -138,7 +141,7 @@ export default function Race() {
     Speech.speak(text, { language: 'en', pitch: 1.0, rate: 0.9 });
   };
 
-  const handleNext = () => {
+  const handleNext = async() => {
     Vibration.vibrate(50); 
     
     if (!isActive) {
@@ -154,20 +157,16 @@ export default function Race() {
 
         const raceDate = new Date().toLocaleDateString();
         
-        const raceResult = { 
-            date: raceDate, 
-            totalTime: formatTime(totalTime), 
-            splits: newHistory,
-            type: 'SIMULATION', 
-            title: `HYROX SIM (${displayCategory})`, // Added Category to Title
-            name: `HYROX SIM (${displayCategory})`
-        };
         
-        AsyncStorage.getItem('raceHistory').then(existing => {
-            const oldHistory = existing ? JSON.parse(existing) : [];
-            const updatedHistory = [raceResult, ...oldHistory];
-            AsyncStorage.setItem('raceHistory', JSON.stringify(updatedHistory));
-        });
+        const raceResult = { 
+          date: new Date().toISOString(), // Vital for Calendar
+          totalTime: formatTime(totalTime), 
+          splits: newHistory,
+          type: 'SIMULATION', 
+          title: `HYROX SIM (${displayCategory})`,
+          name: `HYROX SIM (${displayCategory})`
+        };
+        await DataStore.logEvent(raceResult);
 
         router.replace({ pathname: "/results", params: { data: JSON.stringify(newHistory), totalTime: formatTime(totalTime) } });
         return;

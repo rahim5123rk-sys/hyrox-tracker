@@ -4,6 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DataStore } from './services/DataStore';
 
 export default function WorkoutActive() {
   const router = useRouter();
@@ -96,19 +97,18 @@ export default function WorkoutActive() {
 
     try {
         // 1. SAVE TO HISTORY (The Logbook)
+        
         const newLog = {
-            date: new Date().toLocaleDateString(),
-            completedAt: completionTime,
-            totalTime: formatTime(totalSeconds),
-            title: titleParam || sessionTitle, 
-            type: 'WORKOUT',           
-            sessionType: 'TRAINING',
-            splits: finalSplits,
+          date: new Date().toISOString(),
+          completedAt: completionTime,
+          totalTime: formatTime(totalSeconds),
+          title: titleParam || sessionTitle, 
+          type: 'WORKOUT',           
+          sessionType: 'TRAINING',
+          splits: finalSplits,
         };
 
-        const existingLogs = await AsyncStorage.getItem('raceHistory');
-        const history = existingLogs ? JSON.parse(existingLogs) : [];
-        await AsyncStorage.setItem('raceHistory', JSON.stringify([newLog, ...history]));
+        await DataStore.logEvent(newLog);
         
         // 2. TICK OFF IN PLANNER (The Engine)
         if (sessionId) {

@@ -1,4 +1,4 @@
-import { useTheme } from '@/context/ThemeContext'; // Import Theme Hook
+import { useTheme } from '@/context/ThemeContext';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
@@ -6,12 +6,12 @@ import { useEffect, useState } from 'react';
 import { Alert, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CATEGORIES } from '../utils/pacing';
+import { DataStore } from './services/DataStore'; // IMPORTS FIXED
 
 export default function Settings() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   
-  // 1. GET THEME CONTROLS
   const { colors, setMode, mode, isDark } = useTheme(); 
   
   const [name, setName] = useState('');
@@ -59,7 +59,8 @@ export default function Settings() {
           [
               { text: "Cancel", style: "cancel" },
               { text: "Delete Everything", style: "destructive", onPress: async () => {
-                  await AsyncStorage.clear();
+                  // UPDATED: Use DataStore to clear everything including analytics
+                  await DataStore.clearAll();
                   router.replace('/onboarding');
               }}
           ]
@@ -81,7 +82,7 @@ export default function Settings() {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         
-        {/* 1. APPEARANCE (RESTORED) */}
+        {/* 1. APPEARANCE */}
         <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.sectionTitle, { color: colors.subtext }]}>APPEARANCE</Text>
             <View style={styles.grid}>
@@ -191,6 +192,16 @@ export default function Settings() {
         {/* ACTIONS */}
         <TouchableOpacity style={[styles.saveBtn, { backgroundColor: colors.primary }]} onPress={saveSettings}>
             <Text style={styles.saveText}>SAVE CONFIGURATION</Text>
+        </TouchableOpacity>
+
+        {/* DEBUG CONSOLE LINK */}
+        <TouchableOpacity 
+            style={{ marginVertical: 30, alignItems: 'center' }} 
+            onPress={() => router.push('/debug')}
+        >
+            <Text style={{ color: colors.subtext, fontSize: 10, fontWeight: '900', letterSpacing: 2 }}>
+                OPEN DEVELOPER CONSOLE
+            </Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.resetBtn} onPress={handleReset}>
