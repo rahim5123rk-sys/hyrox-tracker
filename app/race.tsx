@@ -2,29 +2,22 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Speech from 'expo-speech';
-import { useEffect, useState } from 'react';
-
+import { useEffect, useRef, useState } from 'react';
 import { Dimensions, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DataStore } from './services/DataStore';
 
-
 const { width } = Dimensions.get('window');
 
-// --- UPDATED WEIGHTS DATABASE ---
+// --- WEIGHTS DATABASE ---
 const WEIGHTS_DB: any = {
-  // INDIVIDUALS
   MEN_OPEN: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
   MEN_PRO: { sledPush: '202kg', sledPull: '153kg', lunge: '30kg', wallBall: '9kg' },
   WOMEN_OPEN: { sledPush: '102kg', sledPull: '78kg', lunge: '10kg', wallBall: '4kg' },
   WOMEN_PRO: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
-  
-  // DOUBLES (Corrected Standards)
   DOUBLES_MEN: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
   DOUBLES_WOMEN: { sledPush: '102kg', sledPull: '78kg', lunge: '10kg', wallBall: '4kg' },
-  DOUBLES_MIXED: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' }, // Mixed uses Men's weights for sleds/lunges
-  
-  // FALLBACK
+  DOUBLES_MIXED: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' }, 
   RELAY: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' }
 };
 
@@ -60,25 +53,30 @@ export default function Race() {
 
   const [stations, setStations] = useState(BASE_STATIONS); 
   const [index, setIndex] = useState(0);
+  
+  // --- TIMER STATE ---
   const [seconds, setSeconds] = useState(0);      
   const [totalTime, setTotalTime] = useState(0);  
   const [isActive, setIsActive] = useState(false);
+  
+  // REFS FOR ACCURACY
+  const stationStartRef = useRef<number | null>(null);
+  const raceStartRef = useRef<number | null>(null);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
   const [isMuted, setIsMuted] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
   const [displayCategory, setDisplayCategory] = useState('');
 
-  // INITIALIZE WEIGHTS & TARGETS
+  // 1. SETUP
   useEffect(() => {
     const loadCategory = async () => {
-      // 1. Determine Category (Prefer Param > Storage > Default)
       let selectedCat = paramCategory;
       if (!selectedCat) {
           selectedCat = await AsyncStorage.getItem('userCategory') || 'MEN_OPEN';
       }
       setDisplayCategory(selectedCat.replace('_', ' '));
 
-      // 2. Fetch Weights based on exact key (DOUBLES_WOMEN etc)
-      // Fallback to MEN_OPEN if key not found to prevent crashes
       const weights = WEIGHTS_DB[selectedCat] || WEIGHTS_DB.MEN_OPEN;
 
       let updated = BASE_STATIONS.map(s => {
@@ -86,7 +84,6 @@ export default function Race() {
         if (s.key === 'sledPull') return { ...s, details: `${weights.sledPull} (4 x 12.5m)` };
         if (s.key === 'lunge') return { ...s, details: `${weights.lunge} Sandbag (100m)` };
         if (s.key === 'wallBall') return { ...s, details: `${weights.wallBall} (100 Reps)` };
-        // FARMERS CARRY WEIGHT LOGIC (Hardcoded usually, but variable for Pro)
         if (s.key === 'farmers') {
              const farmWeight = selectedCat.includes('PRO') ? '32kg' : '24kg';
              return { ...s, details: `2 x ${farmWeight} KBs (200m)` };
@@ -98,7 +95,6 @@ export default function Race() {
           if (bias === 'RUNNER') updated = updated.map(s => s.type === 'run' ? { ...s, weight: s.weight * 0.85 } : { ...s, weight: s.weight * 1.15 });
           else if (bias === 'LIFTER') updated = updated.map(s => s.type === 'station' ? { ...s, weight: s.weight * 0.85 } : { ...s, weight: s.weight * 1.15 });
       }
-
       setStations(updated);
     };
     loadCategory();
@@ -107,9 +103,7 @@ export default function Race() {
   const currentStation = stations[index];
   
   const getTargetSeconds = () => {
-      if (smartPace && currentStation.type === 'run') {
-          return Math.floor(smartPace);
-      }
+      if (smartPace && currentStation.type === 'run') return Math.floor(smartPace);
       const totalWeight = stations.reduce((acc, item) => acc + item.weight, 0);
       const secondsPerUnit = (totalGoalMinutes * 60) / totalWeight;
       return Math.floor(secondsPerUnit * currentStation.weight);
@@ -117,16 +111,21 @@ export default function Race() {
 
   const targetSeconds = getTargetSeconds();
 
-  // TIMER
+  // 2. TICKER
   useEffect(() => {
-    let interval: any = null;
     if (isActive) {
-      interval = setInterval(() => {
-        setSeconds(s => s + 1);
-        setTotalTime(t => t + 1);
-      }, 1000);
+      if (!stationStartRef.current) stationStartRef.current = Date.now();
+      if (!raceStartRef.current) raceStartRef.current = Date.now();
+
+      intervalRef.current = setInterval(() => {
+        const now = Date.now();
+        setSeconds(Math.floor((now - (stationStartRef.current || now)) / 1000));
+        setTotalTime(Math.floor((now - (raceStartRef.current || now)) / 1000));
+      }, 200);
+    } else {
+      if (intervalRef.current) clearInterval(intervalRef.current);
     }
-    return () => { if (interval) clearInterval(interval); };
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [isActive]);
 
   const formatTime = (totalSeconds: number) => {
@@ -145,21 +144,21 @@ export default function Race() {
     Vibration.vibrate(50); 
     
     if (!isActive) {
+      stationStartRef.current = Date.now();
+      raceStartRef.current = Date.now();
       setIsActive(true);
       speakText("Race Started. Stick to the plan.");
     } else {
-      const newHistory = [...history, { name: currentStation.name, actual: seconds, target: targetSeconds }];
+      const actualTime = seconds;
+      const newHistory = [...history, { name: currentStation.name, actual: actualTime, target: targetSeconds }];
       setHistory(newHistory);
 
       if (currentStation.type === 'finish') {
         setIsActive(false);
         speakText("Race Finished. Well done.");
-
-        const raceDate = new Date().toLocaleDateString();
-        
         
         const raceResult = { 
-          date: new Date().toISOString(), // Vital for Calendar
+          date: new Date().toISOString(), 
           totalTime: formatTime(totalTime), 
           splits: newHistory,
           type: 'SIMULATION', 
@@ -172,13 +171,14 @@ export default function Race() {
         return;
       }
 
-      const diff = targetSeconds - seconds; 
+      const diff = targetSeconds - actualTime; 
       if (diff > 15) speakText(`Banked ${diff} seconds.`);
       else if (diff < -15) speakText(`Behind by ${Math.abs(diff)} seconds.`);
       else speakText(`On Pace.`);
 
       setIndex(prev => prev + 1);
       setSeconds(0); 
+      stationStartRef.current = Date.now(); 
     }
   };
 
@@ -187,22 +187,35 @@ export default function Race() {
     Vibration.vibrate(50);
     setIndex(prev => prev - 1);
     setSeconds(0); 
+    stationStartRef.current = Date.now();
     setHistory(prev => prev.slice(0, -1));
   };
 
+  // --- 3. LIVE PACER LOGIC (THE FIX) ---
   const getPacerStatus = () => {
+      if (!isActive && index === 0) return { text: 'READY TO RACE', color: '#FFD700', bg: 'rgba(255, 215, 0, 0.15)' };
+
+      // 1. Banked Time from COMPLETED stations
       const totalTargetSoFar = history.reduce((acc, item) => acc + item.target, 0);
       const totalActualSoFar = history.reduce((acc, item) => acc + item.actual, 0);
-      const bankedSeconds = totalTargetSoFar - totalActualSoFar;
+      const bankedHistory = totalTargetSoFar - totalActualSoFar;
 
-      if (index === 0) return { text: 'READY TO RACE', color: '#FFD700', bg: 'rgba(255, 215, 0, 0.15)' };
+      // 2. LIVE BUDGET (Counting Down)
+      // "How much time do I have left on this station before I eat into my history?"
+      // Formula: History Bank + (Target for Station - Time Elapsed on Station)
+      const currentCushion = targetSeconds - seconds;
+      const liveLead = bankedHistory + currentCushion;
 
-      if (bankedSeconds > 5) {
-          return { text: `OVERALL AHEAD (-${formatTime(bankedSeconds)})`, color: '#32D74B', bg: 'rgba(50, 215, 75, 0.15)' };
-      } else if (bankedSeconds < -5) {
-           return { text: `OVERALL BEHIND (+${formatTime(Math.abs(bankedSeconds))})`, color: '#FF453A', bg: 'rgba(255, 69, 58, 0.15)' };
+      const absLead = Math.abs(liveLead);
+      const timeStr = formatTime(absLead);
+
+      if (liveLead >= 0) {
+          // You have time remaining. Green.
+          return { text: `TIME CUSHION (${timeStr})`, color: '#32D74B', bg: 'rgba(50, 215, 75, 0.15)' };
+      } else {
+          // You are behind schedule. Red.
+          return { text: `BEHIND PACE (+${timeStr})`, color: '#FF453A', bg: 'rgba(255, 69, 58, 0.15)' };
       }
-      return { text: 'OVERALL ON TRACK', color: '#FFD700', bg: 'rgba(255, 215, 0, 0.15)' };
   };
 
   const pacer = getPacerStatus();
@@ -261,7 +274,7 @@ export default function Race() {
              <Text style={{color: '#FFD700', fontWeight: '900', fontSize: 24, fontVariant: ['tabular-nums']}}>{formatTime(targetSeconds)}</Text>
         </View>
 
-        {/* CUMULATIVE STATUS BADGE */}
+        {/* LIVE PACER BADGE */}
         <View style={[styles.pacerBadge, { backgroundColor: pacer.bg }]}>
             <Text style={[styles.pacerText, { color: pacer.color }]}>
                 {pacer.text}

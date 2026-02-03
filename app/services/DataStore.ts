@@ -3,30 +3,48 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // --- TYPES ---
 export interface LogEntry {
   id: string;
-  date: string;         // ISO Format: YYYY-MM-DD
-  timestamp: number;    // Unix Timestamp for sorting
-  type: string;         // 'SIMULATION', 'RUN', 'WORKOUT', etc.
+  date: string;         // ISO Format
+  timestamp: number;    
+  type: string;         // 'SIMULATION', 'RUN', 'WORKOUT'
   title: string;
   totalTime: string;    
   totalSeconds: number; 
   sessionType?: string; 
   splits?: any[];       
-  details?: any;        
+  details?: any;        // Stores HR, RPE
 }
 
 export interface AnalyticsProfile {
   totalOps: number;
   totalRunDistance: number;
-  totalTonnage: number;       // Lifetime Kg Moved
-  consistencyScore: number;   // 0-100% based on weekly activity
+  totalTonnage: number;       
+  consistencyScore: number;   
   trends: {
-    runPace: number[];        // Last 10 Run splits
-    sledStrength: number[];   // Last 10 Sled Pushes
-    roxzone: number[];        // Last 10 Roxzone/Transition times
+    // 1. PHYSIOLOGY
+    avgHr: number[];          
+    rpe: number[];            
+    
+    // 2. RUNNING
+    runPace: number[];        // Run 1 Splits
+    fatigueIndex: number[];   // Degradation %
+    
+    // 3. THE 8 STATIONS (Specific Tracking)
+    skiErg: number[];
+    sledPush: number[];
+    sledPull: number[];
+    burpees: number[];
+    rowing: number[];
+    farmers: number[];
+    lunges: number[];
+    wallBalls: number[];
+    
+    // 4. TRANSITION
+    roxzone: number[];
   };
   records: {
     best5k: string;
     bestSledPush: number;
+    bestRoxzone: number;
   };
 }
 
@@ -36,78 +54,58 @@ const KEY_PROFILE = 'user_profile';
 
 export const DataStore = {
 
-  // 1. WRITE: Save Event & Update Analytics
+  // 1. WRITE
   async logEvent(entry: any) {
     try {
-      // 1. Prepare new entry with ID and Timestamp
       const newLog: LogEntry = {
         ...entry,
         id: Date.now().toString(),
         timestamp: Date.now(),
-        // Ensure totalSeconds exists, fallback to string parsing if needed
         totalSeconds: entry.totalSeconds || this._timeToSeconds(entry.totalTime)
       };
 
-      // 2. Fetch existing history
       const historyJson = await AsyncStorage.getItem(KEY_HISTORY);
       const history = historyJson ? JSON.parse(historyJson) : [];
-
-      // 3. Add to front of array
       const updatedHistory = [newLog, ...history];
+
       await AsyncStorage.setItem(KEY_HISTORY, JSON.stringify(updatedHistory));
 
-      // 4. Run the Analytics Engine
       const analytics = this._calculateAnalytics(updatedHistory);
       await AsyncStorage.setItem(KEY_ANALYTICS, JSON.stringify(analytics));
 
       return true;
     } catch (e) {
-      console.error("DataStore Write Error", e);
+      console.error("DataStore Save Error", e);
       return false;
     }
   },
 
-  // 2. READ: Get History (For Calendar/List)
-  async getHistory(): Promise<LogEntry[]> {
-    try {
-      const json = await AsyncStorage.getItem(KEY_HISTORY);
-      return json ? JSON.parse(json) : [];
-    } catch (e) {
-      return [];
-    }
-  },
-
-  // 3. READ: Get Analytics (For Profile)
-  async getAnalytics(): Promise<AnalyticsProfile> {
-    const json = await AsyncStorage.getItem(KEY_ANALYTICS);
-    return json ? JSON.parse(json) : this._getEmptyAnalytics();
-  },
-
-  // 4. READ: Full Dossier (For Profile & Debug)
+  // 2. READ
   async getFullDossier() {
      const history = await this.getHistory();
      const analytics = await this.getAnalytics();
      return { history, analytics };
   },
 
-  // 5. MAINTENANCE: Factory Reset
-  async clearAll() {
+  async getHistory(): Promise<LogEntry[]> {
     try {
-      await AsyncStorage.multiRemove([
-          KEY_HISTORY, 
-          KEY_ANALYTICS, 
-          KEY_PROFILE, 
-          'userCategory', 
-          'user_weekly_plan',
-          'user_pbs' // Clear PBs too
-      ]);
-      return true;
-    } catch (e) {
-      return false;
-    }
+      const json = await AsyncStorage.getItem(KEY_HISTORY);
+      return json ? JSON.parse(json) : [];
+    } catch (e) { return []; }
   },
 
-  // --- INTERNAL ANALYTICS ENGINE (THE BRAIN) ---
+  async getAnalytics(): Promise<AnalyticsProfile> {
+    try {
+      const json = await AsyncStorage.getItem(KEY_ANALYTICS);
+      return json ? JSON.parse(json) : this._getEmptyAnalytics();
+    } catch (e) { return this._getEmptyAnalytics(); }
+  },
+
+  async clearAll() {
+    await AsyncStorage.multiRemove([KEY_HISTORY, KEY_ANALYTICS, KEY_PROFILE, 'userCategory', 'user_pbs']);
+  },
+
+  // --- ANALYTICS ENGINE V7 (FULL TRACKING) ---
   _calculateAnalytics(history: LogEntry[]): AnalyticsProfile {
     const stats = this._getEmptyAnalytics();
     
@@ -117,73 +115,91 @@ export const DataStore = {
     let workoutsLast7Days = 0;
 
     history.forEach(log => {
-        // 1. CONSISTENCY TRACKER
-        if (now - log.timestamp < oneWeekMs) {
-            workoutsLast7Days++;
-        }
+        // A. CONSISTENCY
+        if (now - log.timestamp < oneWeekMs) workoutsLast7Days++;
 
-        // 2. VOLUME (RUNNING)
-        if (log.type === 'SIMULATION') stats.totalRunDistance += 8;
-        if (log.type === 'RUN' && log.details?.distance) {
+        // B. VOLUME
+        if (log.type === 'SIMULATION') {
+            stats.totalRunDistance += 8;
+            stats.totalTonnage += (152 * 50) + (103 * 50) + (20 * 100) + (48 * 200);
+        } else if (log.type === 'RUN' && log.details?.distance) {
             stats.totalRunDistance += parseFloat(log.details.distance) || 0;
         }
+        
+        // C. PHYSIOLOGY
+        if (log.details?.hrAvg) stats.trends.avgHr.push(log.details.hrAvg);
+        if (log.details?.rpe) stats.trends.rpe.push(log.details.rpe);
 
-        // 3. VOLUME (TONNAGE)
-        // A. From Simulations (Standard Weights)
-        if (log.type === 'SIMULATION') {
-            // Approx: Sled Push (152kg*50m) + Sled Pull (103kg*50m) + Lunges (20kg*100m) + Farmers (48kg*200m)
-            // We treat distance as 'reps' for this rough calculation
-            stats.totalTonnage += (152 * 50) + (103 * 50) + (20 * 100) + (48 * 200); 
-        }
-        // B. From Manual Station Logs
-        if (log.sessionType === 'QUICK LOG' && log.details?.weight && log.details?.reps) {
-            const w = parseFloat(log.details.weight) || 0;
-            const r = parseFloat(log.details.reps) || 0;
-            stats.totalTonnage += (w * r);
-        }
-
-        // 4. TRENDS (The Telemetry)
-        if (log.splits && Array.isArray(log.splits)) {
-             // RUN PACE
-             const run1 = log.splits.find((s: any) => s.name.toUpperCase().includes('1KM') || s.name.toUpperCase().includes('RUN 1'));
-             if (run1 && typeof run1.actual === 'number') stats.trends.runPace.push(run1.actual);
+        // D. SPLIT MINING
+        const splits = log.splits; 
+        
+        if (splits && Array.isArray(splits)) {
              
-             // SLED STRENGTH
-             const sled = log.splits.find((s: any) => s.name.toUpperCase().includes('SLED PUSH'));
-             if (sled && typeof sled.actual === 'number') stats.trends.sledStrength.push(sled.actual);
+             // HELPER: Handles 'actual' (Sims) AND 'time' (Active Workouts)
+             const find = (key: string) => {
+                 const s = splits.find((x: any) => x.name.toUpperCase().includes(key));
+                 if (!s) return null;
+                 
+                 let val = s.actual;
+                 if (val === undefined || val === null) val = s.time;
+                 
+                 return (typeof val === 'number' && val > 0) ? val : null;
+             };
 
-             // ROXZONE EFFICIENCY
-             // Checks for "ROXZONE" or "TRANSITION"
-             const rox = log.splits.find((s: any) => s.name.toUpperCase().includes('ROXZONE'));
-             if (rox && typeof rox.actual === 'number') stats.trends.roxzone.push(rox.actual);
+             // 1. RUNNING
+             const r1 = find('1KM') || find('RUN 1') || find('RUN 1 (');
+             if (r1) stats.trends.runPace.push(r1);
+
+             // 2. STATIONS
+             const ski = find('SKI'); if(ski) stats.trends.skiErg.push(ski);
+             const push = find('PUSH'); if(push) stats.trends.sledPush.push(push);
+             const pull = find('PULL'); if(pull) stats.trends.sledPull.push(pull);
+             const burp = find('BURPEE'); if(burp) stats.trends.burpees.push(burp);
+             const row = find('ROW'); if(row) stats.trends.rowing.push(row);
+             const farm = find('FARM'); if(farm) stats.trends.farmers.push(farm);
+             const lung = find('LUNG'); if(lung) stats.trends.lunges.push(lung);
+             const wall = find('WALL'); if(wall) stats.trends.wallBalls.push(wall);
+             
+             // 3. TRANSITION
+             const rox = find('ROXZONE'); if(rox) stats.trends.roxzone.push(rox);
+
+             // 4. FATIGUE
+             const runs = splits.filter((s:any) => s.name.toUpperCase().includes('RUN'));
+             if (runs.length >= 2) {
+                 const getVal = (s: any) => (typeof s.actual === 'number' ? s.actual : s.time) || 0;
+                 const first = getVal(runs[0]);
+                 const last = getVal(runs[runs.length - 1]);
+                 
+                 if (first > 0 && last > 0) {
+                     const degradation = ((last - first) / first) * 100;
+                     stats.trends.fatigueIndex.push(degradation);
+                 }
+             }
         }
     });
 
-    // 5. FINALIZE SCORES
-    // Consistency Score: Goal = 4 workouts/week. Cap at 100%.
+    // E. FINALIZE
     stats.consistencyScore = Math.min(100, Math.round((workoutsLast7Days / 4) * 100));
 
-    // Trim Trends to last 10 entries & Reverse so newest is rightmost (or strictly chronological for charts)
-    stats.trends.runPace = stats.trends.runPace.slice(0, 10).reverse();
-    stats.trends.sledStrength = stats.trends.sledStrength.slice(0, 10).reverse();
-    stats.trends.roxzone = stats.trends.roxzone.slice(0, 10).reverse();
+    const process = (arr: number[]) => arr.slice(0, 10).reverse();
+    
+    (Object.keys(stats.trends) as Array<keyof typeof stats.trends>).forEach(key => {
+        // @ts-ignore
+        stats.trends[key] = process(stats.trends[key]);
+    });
 
     return stats;
   },
 
-  // INITIAL STATE (Typed Correctly)
   _getEmptyAnalytics(): AnalyticsProfile {
       return {
-          totalOps: 0, 
-          totalRunDistance: 0, 
-          totalTonnage: 0, 
-          consistencyScore: 0,
+          totalOps: 0, totalRunDistance: 0, totalTonnage: 0, consistencyScore: 0,
           trends: { 
-              runPace: [] as number[],      
-              sledStrength: [] as number[],
-              roxzone: [] as number[]
+            avgHr: [], rpe: [], runPace: [], fatigueIndex: [],
+            skiErg: [], sledPush: [], sledPull: [], burpees: [], rowing: [], farmers: [], lunges: [], wallBalls: [],
+            roxzone: []
           },
-          records: { best5k: '--:--', bestSledPush: 0 }
+          records: { best5k: '--:--', bestSledPush: 0, bestRoxzone: 0 }
       };
   },
 
