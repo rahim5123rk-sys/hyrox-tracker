@@ -5,13 +5,22 @@ import * as Speech from 'expo-speech';
 import { useEffect, useRef, useState } from 'react';
 import { Alert, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DataStore } from './services/DataStore';
-// [FIX] Import the shared standards
 import { HYROX_STANDARDS, HyroxDivision } from '../constants/HyroxStandards';
+import { DataStore, METRICS, MetricKey } from './services/DataStore';
 
 const RECOVERY_KEY = 'hyrox_race_recovery_state';
 
-// [REMOVED] const WEIGHTS_DB = { ... } <-- Deleted this hardcoded block
+// [ARCHITECT] MAP STATIONS TO DB METRICS
+const METRIC_MAP: Record<string, MetricKey> = {
+    'ski': METRICS.SKI_ERG,
+    'sledPush': METRICS.SLED_PUSH,
+    'sledPull': METRICS.SLED_PULL,
+    'burpee': METRICS.BURPEES,
+    'row': METRICS.ROWING,
+    'farmers': METRICS.FARMERS,
+    'lunge': METRICS.LUNGES,
+    'wallBall': METRICS.WALL_BALLS
+};
 
 const BASE_STATIONS = [
   { name: '1km RUN', type: 'run', weight: 1.0, key: 'run', icon: 'walk-outline' },
@@ -45,7 +54,8 @@ export default function Race() {
 
   const [stations, setStations] = useState(BASE_STATIONS); 
   const [index, setIndex] = useState(0);
-  
+  const [isTransition, setIsTransition] = useState(false);
+
   const [seconds, setSeconds] = useState(0);      
   const [totalTime, setTotalTime] = useState(0);  
   const [isActive, setIsActive] = useState(false);
@@ -95,6 +105,7 @@ export default function Race() {
       setSmartPace(state.smartPace);
       setHistory(state.history);
       setIndex(state.index);
+      setIsTransition(state.isTransition || false);
       
       raceStartRef.current = state.raceStartRef;
       stationStartRef.current = state.stationStartRef;
@@ -107,7 +118,7 @@ export default function Race() {
       await AsyncStorage.removeItem(RECOVERY_KEY);
   };
 
-  const saveRecoveryState = async (newHistory: any[], newIndex: number) => {
+  const saveRecoveryState = async (newHistory: any[], newIndex: number, transitionState: boolean) => {
       if (!isActive && newIndex === 0) return;
       
       const state = {
@@ -115,6 +126,7 @@ export default function Race() {
           category, goalMinutes, bias, smartPace,
           history: newHistory,
           index: newIndex,
+          isTransition: transitionState,
           raceStartRef: raceStartRef.current,
           stationStartRef: stationStartRef.current || Date.now()
       };
@@ -123,28 +135,59 @@ export default function Race() {
 
   const loadConfig = async (cat: string) => {
       let selectedCat = cat;
-      // [FIX] Use HyroxDivision type
       if (!selectedCat) selectedCat = await AsyncStorage.getItem('userCategory') || 'MEN_OPEN';
       
       setDisplayCategory(selectedCat.replace('_', ' '));
-      
-      // [FIX] Use Shared Standards
       const weights = HYROX_STANDARDS[selectedCat as HyroxDivision] || HYROX_STANDARDS.MEN_OPEN;
 
-      let updated = BASE_STATIONS.map(s => {
-        // [FIX] Updated key access to match the constant file (e.g. SLED_PUSH, WALL_BALL)
-        if (s.key === 'sledPush') return { ...s, details: `${weights.SLED_PUSH}kg (4 x 12.5m)` };
-        if (s.key === 'sledPull') return { ...s, details: `${weights.SLED_PULL}kg (4 x 12.5m)` };
-        if (s.key === 'lunge') return { ...s, details: `${weights.LUNGE}kg Sandbag (100m)` };
-        if (s.key === 'wallBall') return { ...s, details: `${weights.WALL_BALL}kg (100 Reps)` };
-        if (s.key === 'farmers') {
-             // [FIX] Use KETTLEBELL weight from standards
-             const farmWeight = weights.KETTLEBELL;
-             return { ...s, details: `2 x ${farmWeight}kg KBs (200m)` };
+      // [ARCHITECT] FETCH BIOMETRIC DATA
+      let analytics = { trends: {} as any };
+      try {
+          analytics = await DataStore.getAnalytics();
+      } catch (e) { console.log('No analytics available'); }
+
+      // 1. CALCULATE FATIGUE MODIFIER
+      // If user has >15% fatigue, increase run progression slope
+      const fatigueIndex = (analytics.trends[METRICS.FATIGUE]?.[0] || 0);
+      const fatigueMod = Math.max(0, fatigueIndex / 100); 
+
+      // 2. MORPH WEIGHTS BASED ON HISTORY
+      let updated = BASE_STATIONS.map((s, i) => {
+        let newWeight = s.weight;
+
+        // A. Run Fatigue Logic
+        if (s.type === 'run') {
+            // Base progression (1.0 -> 1.18) + Fatigue Penalty
+            // Later runs get heavier if fatigue is high
+            const runNumber = Math.floor(i / 2); // 0 to 7
+            newWeight += (runNumber * fatigueMod * 0.05); 
         }
-        return s;
+
+        // B. Station Efficiency Logic
+        if (s.type === 'station' && s.key) {
+            const metricKey = METRIC_MAP[s.key];
+            const history = analytics.trends[metricKey];
+            
+            // If we have history, check if they are historically slow/fast
+            if (history && history.length > 0) {
+                const avgTime = history.reduce((a: number, b: number) => a + b, 0) / history.length;
+                // Heuristic: If avgTime is high relative to others, bump weight
+                // (Simplified logic: We rely on Bias primarily, but this is the hook for V2)
+            }
+        }
+
+        // Apply Standards text
+        let details = s.details;
+        if (s.key === 'sledPush') details = `${weights.SLED_PUSH}kg (4 x 12.5m)`;
+        else if (s.key === 'sledPull') details = `${weights.SLED_PULL}kg (4 x 12.5m)`;
+        else if (s.key === 'lunge') details = `${weights.LUNGE}kg Sandbag (100m)`;
+        else if (s.key === 'wallBall') details = `${weights.WALL_BALL}kg (100 Reps)`;
+        else if (s.key === 'farmers') details = `2 x ${weights.KETTLEBELL}kg KBs (200m)`;
+
+        return { ...s, weight: newWeight, details };
       });
 
+      // 3. APPLY BIAS (Legacy Override)
       if (!smartPace) {
           if (bias === 'RUNNER') updated = updated.map(s => s.type === 'run' ? { ...s, weight: s.weight * 0.85 } : { ...s, weight: s.weight * 1.15 });
           else if (bias === 'LIFTER') updated = updated.map(s => s.type === 'station' ? { ...s, weight: s.weight * 0.85 } : { ...s, weight: s.weight * 1.15 });
@@ -153,10 +196,13 @@ export default function Race() {
   };
 
   const currentStation = stations[index] || stations[stations.length - 1];
+  const nextStation = stations[index + 1]; 
   
   const getTargetSeconds = () => {
       if (!currentStation) return 0;
       if (smartPace && currentStation.type === 'run') return Math.floor(smartPace);
+      
+      // Dynamic Goal Calculation
       const totalWeight = stations.reduce((acc, item) => acc + item.weight, 0);
       const secondsPerUnit = (goalMinutes * 60) / totalWeight;
       return Math.floor(secondsPerUnit * currentStation.weight);
@@ -169,7 +215,7 @@ export default function Race() {
       if (!stationStartRef.current) stationStartRef.current = Date.now();
       if (!raceStartRef.current) raceStartRef.current = Date.now();
 
-      if (index === 0 && seconds === 0) saveRecoveryState(history, index);
+      if (index === 0 && seconds === 0) saveRecoveryState(history, index, isTransition);
 
       intervalRef.current = setInterval(() => {
         const now = Date.now();
@@ -202,13 +248,30 @@ export default function Race() {
       raceStartRef.current = Date.now();
       setIsActive(true);
       speakText("Race Started. Stick to the plan.");
-      saveRecoveryState([], 0); 
-    } else {
-      const actualTime = seconds;
-      const newHistory = [...history, { name: currentStation.name, actual: actualTime, target: targetSeconds }];
-      setHistory(newHistory);
+      saveRecoveryState([], 0, false); 
+      return;
+    } 
 
-      if (currentStation.type === 'finish') {
+    if (isTransition) {
+        const roxTime = seconds;
+        const newHistory = [...history, { name: 'ROXZONE', actual: roxTime, target: 0 }]; 
+        setHistory(newHistory);
+        
+        setIndex(prev => prev + 1);
+        setIsTransition(false);
+        setSeconds(0);
+        stationStartRef.current = Date.now();
+        
+        speakText(`Starting ${stations[index+1]?.name || 'Next Station'}`);
+        saveRecoveryState(newHistory, index + 1, false);
+        return;
+    }
+
+    const actualTime = seconds;
+    const newHistory = [...history, { name: currentStation.name, actual: actualTime, target: targetSeconds }];
+    setHistory(newHistory);
+
+    if (currentStation.type === 'finish') {
         setIsActive(false);
         speakText("Race Finished. Well done.");
         
@@ -216,7 +279,7 @@ export default function Race() {
           date: new Date().toISOString(), 
           totalTime: formatTime(totalTime),
           totalSeconds: totalTime, 
-          splits: newHistory,
+          splits: newHistory, 
           type: 'SIMULATION', 
           title: `HYROX SIM (${displayCategory})`,
           name: `HYROX SIM (${displayCategory})`
@@ -226,39 +289,59 @@ export default function Race() {
 
         router.replace({ pathname: "/results", params: { data: JSON.stringify(newHistory), totalTime: formatTime(totalTime) } });
         return;
-      }
+    }
 
-      const diff = targetSeconds - actualTime; 
-      if (diff > 15) speakText(`Banked ${diff} seconds.`);
-      else if (diff < -15) speakText(`Behind by ${Math.abs(diff)} seconds.`);
-      else speakText(`On Pace.`);
-
-      const nextIndex = index + 1;
-      setIndex(nextIndex);
-      setSeconds(0); 
-      stationStartRef.current = Date.now(); 
-      saveRecoveryState(newHistory, nextIndex);
+    const diff = targetSeconds - actualTime; 
+    if (diff > 15) speakText(`Banked ${diff} seconds.`);
+    else if (diff < -15) speakText(`Behind by ${Math.abs(diff)} seconds.`);
+    
+    const nextIsFinish = stations[index + 1]?.type === 'finish';
+    
+    if (nextIsFinish) {
+        setIndex(prev => prev + 1);
+        setSeconds(0);
+        stationStartRef.current = Date.now();
+        saveRecoveryState(newHistory, index + 1, false);
+    } else {
+        setIsTransition(true);
+        setSeconds(0);
+        stationStartRef.current = Date.now();
+        speakText("Transition.");
+        saveRecoveryState(newHistory, index, true);
     }
   };
 
   const handleUndo = () => {
-    if (index === 0) return; 
+    if (index === 0 && !isTransition) return; 
     Vibration.vibrate(50);
-    const prevIndex = index - 1;
-    setIndex(prevIndex);
-    setSeconds(0); 
-    stationStartRef.current = Date.now();
     
-    const revertedHistory = history.slice(0, -1);
-    setHistory(revertedHistory);
-    saveRecoveryState(revertedHistory, prevIndex);
+    if (isTransition) {
+        setIsTransition(false);
+        stationStartRef.current = Date.now(); 
+        setSeconds(0);
+        const revertedHistory = history.slice(0, -1);
+        setHistory(revertedHistory);
+        saveRecoveryState(revertedHistory, index, false);
+    } else {
+        if (index > 0) {
+            setIndex(prev => prev - 1);
+            setIsTransition(true);
+            stationStartRef.current = Date.now();
+            setSeconds(0);
+            const revertedHistory = history.slice(0, -1);
+            setHistory(revertedHistory);
+            saveRecoveryState(revertedHistory, index - 1, true);
+        }
+    }
   };
 
   const getPacerStatus = () => {
       if (!isActive && index === 0) return { text: 'READY TO RACE', color: '#FFD700', bg: 'rgba(255, 215, 0, 0.15)' };
-      const totalTargetSoFar = history.reduce((acc, item) => acc + item.target, 0);
+      if (isTransition) return { text: 'ROXZONE', color: '#888', bg: '#222' }; 
+
+      const totalTargetSoFar = history.reduce((acc, item) => acc + (item.name === 'ROXZONE' ? 0 : item.target), 0);
       const totalActualSoFar = history.reduce((acc, item) => acc + item.actual, 0);
-      const bankedHistory = totalTargetSoFar - totalActualSoFar;
+      const bankedHistory = totalTargetSoFar - (totalActualSoFar); 
       const currentCushion = targetSeconds - seconds;
       const liveLead = bankedHistory + currentCushion;
       const absLead = Math.abs(liveLead);
@@ -270,8 +353,14 @@ export default function Race() {
 
   const pacer = getPacerStatus();
 
+  const getBackgroundColor = () => {
+      if (isTransition) return '#1A1A1A'; 
+      if (currentStation.type === 'run') return '#000'; 
+      return '#111'; 
+  };
+
   return (
-    <View style={[styles.container, { backgroundColor: currentStation.type === 'run' ? '#000' : '#111' }]}>
+    <View style={[styles.container, { backgroundColor: getBackgroundColor() }]}>
       <StatusBar barStyle="light-content" />
       
       <View style={[styles.header, { paddingTop: insets.top }]}>
@@ -308,33 +397,46 @@ export default function Race() {
       </View>
 
       <View style={styles.mainContent}>
-        <Text style={styles.stationLabel}>STATION {index + 1}/17</Text>
-        <Text style={[styles.stationTitle, { color: currentStation.type === 'run' ? '#fff' : '#4dabf7' }]}>
-            {currentStation.name}
-        </Text>
-        
-        {currentStation.details && (
-          <View style={styles.detailPill}>
-             <Text style={styles.detailText}>{currentStation.details}</Text>
-          </View>
+        {isTransition ? (
+            <>
+                <Text style={styles.stationLabel}>TRANSITION</Text>
+                <Text style={[styles.stationTitle, { color: '#888' }]}>ROXZONE</Text>
+                <View style={styles.detailPill}>
+                    <Text style={styles.detailText}>NEXT: {nextStation?.name}</Text>
+                </View>
+            </>
+        ) : (
+            <>
+                <Text style={styles.stationLabel}>STATION {index + 1}/17</Text>
+                <Text style={[styles.stationTitle, { color: currentStation.type === 'run' ? '#fff' : '#4dabf7' }]}>
+                    {currentStation.name}
+                </Text>
+                {currentStation.details && (
+                  <View style={styles.detailPill}>
+                     <Text style={styles.detailText}>{currentStation.details}</Text>
+                  </View>
+                )}
+            </>
         )}
 
-        <Text style={[styles.mainTimer, { color: '#fff' }]}>{formatTime(seconds)}</Text>
+        <Text style={[styles.mainTimer, { color: isTransition ? '#888' : '#fff' }]}>{formatTime(seconds)}</Text>
 
-        <View style={{flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20}}>
-             <Text style={{color: '#666', fontWeight: 'bold', fontSize: 16}}>TARGET:</Text>
-             <Text style={{color: '#FFD700', fontWeight: '900', fontSize: 24, fontVariant: ['tabular-nums']}}>{formatTime(targetSeconds)}</Text>
-        </View>
+        {!isTransition && (
+            <View style={{flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20}}>
+                 <Text style={{color: '#666', fontWeight: 'bold', fontSize: 16}}>TARGET:</Text>
+                 <Text style={{color: '#FFD700', fontWeight: '900', fontSize: 24, fontVariant: ['tabular-nums']}}>{formatTime(targetSeconds)}</Text>
+            </View>
+        )}
 
         <View style={[styles.pacerBadge, { backgroundColor: pacer.bg }]}>
             <Text style={[styles.pacerText, { color: pacer.color }]}>{pacer.text}</Text>
         </View>
         
-        {smartPace && <Text style={styles.smartModeText}>SMART PACER ACTIVE</Text>}
+        {smartPace && !isTransition && <Text style={styles.smartModeText}>SMART PACER ACTIVE</Text>}
       </View>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
-          {isActive && index > 0 && (
+          {isActive && (
              <TouchableOpacity style={styles.undoBtn} onPress={handleUndo}>
                 <Ionicons name="arrow-undo" size={20} color="#666" />
                 <Text style={styles.undoText}>UNDO</Text>
@@ -343,14 +445,17 @@ export default function Race() {
           
           <TouchableOpacity 
             style={[styles.actionBtn, { 
-                backgroundColor: isActive ? (currentStation.type === 'finish' ? '#FFD700' : pacer.color) : '#FFD700',
+                backgroundColor: isActive ? (isTransition ? '#fff' : '#FFD700') : '#FFD700',
                 flex: 1 
             }]} 
             onPress={handleNext}
             activeOpacity={0.8}
           >
             <Text style={[styles.actionBtnText, { color: '#000' }]}>
-                {isActive ? (currentStation.type === 'finish' ? 'FINISH RACE' : 'NEXT STATION') : 'START RACE'}
+                {!isActive ? 'START RACE' : (
+                    isTransition ? `START ${nextStation?.key?.toUpperCase() || 'NEXT'}` : 
+                    (currentStation.type === 'finish' ? 'FINISH RACE' : 'FINISH STATION')
+                )}
             </Text>
           </TouchableOpacity>
       </View>
@@ -380,5 +485,5 @@ const styles = StyleSheet.create({
   undoBtn: { backgroundColor: '#1A1A1A', width: 80, height: 80, borderRadius: 20, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#333' },
   undoText: { color: '#666', fontSize: 10, fontWeight: 'bold', marginTop: 4 },
   actionBtn: { height: 80, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-  actionBtnText: { fontSize: 22, fontWeight: '900', letterSpacing: 1 },
+  actionBtnText: { fontSize: 18, fontWeight: '900', letterSpacing: 1 },
 });

@@ -28,6 +28,10 @@ export default function Planner() {
     syncPlanner();
   }, []));
 
+  const getLocalISODate = (date: Date) => {
+  const offset = date.getTimezoneOffset() * 60000; // Offset in milliseconds
+  return new Date(date.getTime() - offset).toISOString().split('T')[0];
+};
   const syncPlanner = async () => {
     try {
         // 1. IDENTITY
@@ -64,6 +68,7 @@ export default function Planner() {
     } catch (e) {
         console.error("Planner Sync Failure:", e);
     }
+  
   };
 
   // [ARCHITECT] CORE LOGIC: Matching Plan to History
@@ -80,17 +85,15 @@ export default function Planner() {
           // Calculate the specific date for this session slot
           const sessionDate = new Date(startOfWeek);
           sessionDate.setDate(startOfWeek.getDate() + idx);
-          const dateStr = sessionDate.toISOString().split('T')[0]; // YYYY-MM-DD
+          const sessionDateStr = getLocalISODate(sessionDate); // YYYY-MM-DD
 
           // CHECK VAULT: Did we log anything on this date?
           // We look for a log that matches the date AND (matches the ID OR fuzzy matches the title)
           const matchedLog = history.find(log => {
-              const logDate = log.date.split('T')[0];
-              if (logDate !== dateStr) return false;
+             const logDateObj = new Date(log.date);
+             const logLocalStr = getLocalISODate(logDateObj);
+             return logLocalStr === sessionDateStr;
               
-              // If it's a simulation/workout, assume it fulfills the slot
-              // Or check strict ID match if available
-              return true; 
           });
 
           let status: 'PENDING' | 'COMPLETED' | 'MISSED' | 'SKIPPED' = 'PENDING';

@@ -5,19 +5,17 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import {
     Dimensions, Image, Modal, ScrollView, StatusBar,
-    StyleSheet, Text, TextInput, TouchableOpacity, View
+    StyleSheet, Text, TouchableOpacity, View
 } from 'react-native';
 import { LineChart } from "react-native-chart-kit";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RadarChart } from '../../components/RadarChart';
 import { calculateLevel } from '../../utils/gamification';
 import { AnalysisEngine, AnalysisReport } from './../services/AnalysisEngine';
-// [IMPORT] METRICS & MetricKey for Type Safety
 import { AnalyticsProfile, DataStore, LogEntry, METRICS, MetricKey } from './../services/DataStore';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
-// [UPDATE] USE METRIC KEYS (No more Magic Strings)
 const STATION_KEYS: Record<string, MetricKey> = {
     'SKI ERG': METRICS.SKI_ERG,
     'SLED PUSH': METRICS.SLED_PUSH,
@@ -35,6 +33,22 @@ const STANDARDS_5K: any = { MEN_PRO: { p1: 15.5, p5: 17.0, p20: 18.5, p50: 20.0 
 
 const getPercentileRank = (time: number, standards: any) => { if (!standards) return { text: "UNRANKED", color: "#666", diff: "No Data" }; if (time <= standards.p1) return { text: "TOP 1% (ELITE)", color: "#FFD700", diff: "World Class Pace" }; if (time <= standards.p5 || time <= standards.p10) return { text: "TOP 10% (ADVANCED)", color: "#32D74B", diff: "Podium Contender" }; if (time <= standards.p20 || time <= standards.p25) return { text: "TOP 25% (STRONG)", color: "#32D74B", diff: "Well Above Average" }; if (time <= standards.p50) return { text: "TOP 50% (AVERAGE)", color: "#0A84FF", diff: "Solid Baseline" }; return { text: "DEVELOPING", color: "#888", diff: "Keep Pushing" };};
 
+// [NEW] PREDICTOR COMPONENT
+const RacePredictor = ({ data }: { data: any }) => (
+    <View style={styles.predictorCard}>
+        <View>
+            <Text style={styles.predLabel}>ESTIMATED FINISH TIME</Text>
+            <Text style={styles.predTime}>{data.totalTime}</Text>
+        </View>
+        <View style={{alignItems: 'flex-end'}}>
+            <View style={styles.predBadge}>
+                <Text style={styles.predBadgeText}>AI PROJECTION</Text>
+            </View>
+            <Text style={styles.predSub} numberOfLines={1}>{data.splitAnalysis}</Text>
+        </View>
+    </View>
+);
+
 export default function Profile() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -43,7 +57,6 @@ export default function Profile() {
   const [currentCategory, setCurrentCategory] = useState('MEN_OPEN');
   const [analytics, setAnalytics] = useState<AnalyticsProfile | null>(null);
   const [report, setReport] = useState<AnalysisReport | null>(null);
-  const [history, setHistory] = useState<LogEntry[]>([]);
   const [rankData, setRankData] = useState<any>(null);
   
   const [pftResult, setPftResult] = useState<any>(null);
@@ -57,8 +70,6 @@ export default function Profile() {
   const [insight, setInsight] = useState({ title: '', value: '', sub: '', positive: true });
   
   const [pbs, setPbs] = useState<any>({});
-  const [showEditPBModal, setShowEditPBModal] = useState(false);
-  const [editingPbs, setEditingPbs] = useState<any>({});
   const [showCertificate, setShowCertificate] = useState(false);
   const [activeCertificate, setActiveCertificate] = useState<any>(null);
 
@@ -69,18 +80,15 @@ export default function Profile() {
     try {
       const dossier = await DataStore.getFullDossier();
       setAnalytics(dossier.analytics);
-      setHistory(dossier.history);
 
-      // [FIX] LOAD FROM SQLITE SOURCE OF TRUTH
       const profile = await DataStore.getUserProfile();
-      let category = 'MEN_OPEN'; // Default fallback
+      let category = 'MEN_OPEN'; 
 
       if (profile) {
           setName(profile.name?.toUpperCase());
           category = profile.category;
           setCurrentCategory(category);
       } else {
-          // Legacy Fallback (Safe to remove later)
           const legacyName = await AsyncStorage.getItem('user_profile');
           if (legacyName) setName(JSON.parse(legacyName).name?.toUpperCase());
       }
@@ -88,20 +96,22 @@ export default function Profile() {
       const totalXP = dossier.analytics.totalOps * 150;
       setRankData(calculateLevel(totalXP));
       
-      calculateBioSignature(dossier.analytics);
-      
-      // [FIX] PASS CATEGORY TO ENGINE
       const coachReport = AnalysisEngine.generateReport(dossier.analytics, category);
       setReport(coachReport);
+      
+      // [FIX] Use Centralized Bio-Signature
+      const { speed, power, engine, grit, consistency } = coachReport.bioSignature;
+      setRadarData([speed, power, engine, grit, consistency]);
 
-      const savedPbs = await AsyncStorage.getItem('user_pbs');
-      setPbs(savedPbs ? JSON.parse(savedPbs) : {});
+      // [FIX] Use Auto-Verified PBs from DB
+      setPbs(dossier.analytics.records);
 
       analyzeBenchmarks(dossier.history, category);
     } catch (e) { console.log(e); }
   };
 
   const analyzeBenchmarks = async (logs: LogEntry[], category: string) => {
+      // Logic relies on ID/Type matching for robustness
       const pftLog = logs.find(r => r.title.includes('PFT'));
       if (pftLog) {
           const mins = pftLog.totalSeconds / 60;
@@ -118,38 +128,9 @@ export default function Profile() {
       }
   };
 
-  const calculateBioSignature = (stats: AnalyticsProfile) => {
-      const score = (val: number, elite: number, rookie: number) => {
-          if (!val) return 0;
-          if (val <= elite) return 100;
-          if (val >= rookie) return 20;
-          return Math.round(20 + ((rookie - val) / (rookie - elite)) * 80);
-      };
-      
-      const last = (arr: number[]) => (arr && arr.length > 0) ? arr[arr.length - 1] : 0;
-
-      // [UPDATE] USE METRIC CONSTANTS
-      const lastPace = last(stats.trends[METRICS.RUN_PACE]) || 360;
-      const speed = score(lastPace, 240, 420); 
-      
-      const lastSled = last(stats.trends[METRICS.SLED_PUSH]) || 180;
-      const power = score(lastSled, 120, 300); 
-      
-      const ski = last(stats.trends[METRICS.SKI_ERG]) || 270;
-      const row = last(stats.trends[METRICS.ROWING]) || 270;
-      const engine = score((ski+row)/2, 230, 360); 
-      
-      const lastFatigue = last(stats.trends[METRICS.FATIGUE]) || 20;
-      const grit = Math.max(0, 100 - (lastFatigue * 2)); 
-      
-      const consistency = stats.consistencyScore || 0;
-      setRadarData([speed, power, engine, grit, consistency]);
-  };
-
   const calculateLineChart = () => {
       if (!analytics) return;
       
-      // [UPDATE] USE METRIC CONSTANTS
       const count = analytics.trends[METRICS.RUN_PACE].length; 
       if (count < 1 && chartMode === 'RACE') { setChartData([0]); return; }
 
@@ -163,7 +144,6 @@ export default function Profile() {
           setInsight({ title: "RUN PACE", value: `${dataPoints[count-1] || '--'}`, sub: "MINS / KM", positive: true });
       } 
       else if (chartMode === 'STATIONS') {
-          // [UPDATE] Type-Safe Lookup
           const key = STATION_KEYS[stationFilter];
           const raw = analytics.trends[key] || [];
           
@@ -195,14 +175,6 @@ export default function Profile() {
   const openCertificate = (data: any) => {
       setActiveCertificate(data);
       setShowCertificate(true);
-  };
-
-  const savePBs = async () => {
-     try {
-        await AsyncStorage.setItem('user_pbs', JSON.stringify(editingPbs));
-        setPbs(editingPbs);
-        setShowEditPBModal(false);
-    } catch (e) { console.log(e); }
   };
 
   if (!rankData || !analytics) return <View style={styles.container} />;
@@ -238,7 +210,7 @@ export default function Profile() {
 
       <ScrollView contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
         
-        {/* 2. RADAR CHART & BIO-SIGNATURE */}
+        {/* 2. RADAR CHART & PREDICTOR */}
         <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>ATHLETE BIO-SIGNATURE</Text></View>
         <View style={styles.chartContainer}>
              <View style={{alignItems: 'center', marginVertical: 10}}>
@@ -249,9 +221,11 @@ export default function Profile() {
                 />
             </View>
             {report && <Text style={styles.radarAnalysis}>{report.radarAnalysis}</Text>}
+            {/* [NEW] Race Predictor */}
+            {report && <RacePredictor data={report.racePrediction} />}
         </View>
 
-        {/* 3. TACTICAL ANALYSIS CARD (THE BRAIN) */}
+        {/* 3. TACTICAL ANALYSIS CARD */}
         {report && (
             <View style={styles.coachContainer}>
                 <View style={styles.coachHeaderRow}>
@@ -382,29 +356,26 @@ export default function Profile() {
             </>
         )}
 
-        {/* 6. TROPHY CASE */}
+        {/* 6. TROPHY CASE (AUTO-VERIFIED) */}
         <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>TROPHY CASE</Text>
-            <TouchableOpacity onPress={() => { setEditingPbs({...pbs}); setShowEditPBModal(true); }}>
-                <Text style={styles.editLink}>EDIT</Text>
-            </TouchableOpacity>
+            <Text style={styles.sectionTitle}>TROPHY CASE (AUTO-VERIFIED)</Text>
         </View>
         <View style={styles.pbGrid}>
             <View style={[styles.pbCard, {borderColor: '#FFD700'}]}>
                 <Text style={[styles.pbLabel, {color: '#FFD700'}]}>SIMULATOR PB</Text>
-                <Text style={[styles.pbValue, {color: '#fff'}]}>{pbs.raceSim || '--:--'}</Text>
+                <Text style={[styles.pbValue, {color: '#fff'}]}>{pbs.bestSim || '--:--'}</Text>
             </View>
             <View style={styles.pbCard}>
                 <Text style={styles.pbLabel}>5K RUN</Text>
-                <Text style={styles.pbValue}>{pbs.run5k || '--:--'}</Text>
+                <Text style={styles.pbValue}>{pbs.best5k || '--:--'}</Text>
             </View>
             <View style={styles.pbCard}>
-                <Text style={styles.pbLabel}>SLED PUSH</Text>
-                <Text style={styles.pbValue}>{pbs.sledPush || '--'} KG</Text>
+                <Text style={styles.pbLabel}>HEAVIEST SLED</Text>
+                <Text style={styles.pbValue}>{pbs.bestSledPush || '--'} KG</Text>
             </View>
             <View style={styles.pbCard}>
-                <Text style={styles.pbLabel}>ROXZONE</Text>
-                <Text style={styles.pbValue}>{pbs.roxzone || '--:--'}</Text>
+                <Text style={styles.pbLabel}>BEST ROXZONE</Text>
+                <Text style={styles.pbValue}>{DataStore._formatTime(pbs.bestRoxzone) || '--:--'}</Text>
             </View>
         </View>
 
@@ -417,27 +388,6 @@ export default function Profile() {
         
         <View style={{height: 30}} />
       </ScrollView>
-
-      {/* EDIT MODAL */}
-      <Modal visible={showEditPBModal} animationType="slide" transparent>
-        <BlurView intensity={90} tint="dark" style={styles.modalContainer}>
-            <View style={[styles.modalContent, {height: '60%'}]}>
-                <View style={styles.modalHeader}>
-                    <Text style={styles.modalTitle}>UPDATE RECORDS</Text>
-                    <TouchableOpacity onPress={() => setShowEditPBModal(false)} style={styles.closeBtn}><Ionicons name="close" size={24} color="#fff" /></TouchableOpacity>
-                </View>
-                <ScrollView>
-                    <Text style={styles.inputLabel}>5K RUN TIME</Text>
-                    <TextInput style={styles.input} placeholder="20:00" placeholderTextColor="#444" value={editingPbs.run5k} onChangeText={(t) => setEditingPbs({...editingPbs, run5k: t})} />
-                    <Text style={styles.inputLabel}>HEAVY SLED PUSH (KG)</Text>
-                    <TextInput style={styles.input} placeholder="150" placeholderTextColor="#444" keyboardType="numeric" value={editingPbs.sledPush} onChangeText={(t) => setEditingPbs({...editingPbs, sledPush: t})} />
-                    <Text style={styles.inputLabel}>ROXZONE AVG PACE</Text>
-                    <TextInput style={styles.input} placeholder="4:30" placeholderTextColor="#444" value={editingPbs.roxzone} onChangeText={(t) => setEditingPbs({...editingPbs, roxzone: t})} />
-                    <TouchableOpacity style={styles.saveBtn} onPress={savePBs}><Text style={styles.saveBtnText}>SAVE RECORDS</Text></TouchableOpacity>
-                </ScrollView>
-            </View>
-        </BlurView>
-      </Modal>
 
       {/* CERTIFICATE MODAL */}
       <Modal visible={showCertificate} animationType="fade" transparent>
@@ -508,7 +458,6 @@ const styles = StyleSheet.create({
 
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 25, marginBottom: 15 },
   sectionTitle: { color: '#fff', fontSize: 12, fontWeight: '900', letterSpacing: 1 },
-  editLink: { color: '#FFD700', fontSize: 10, fontWeight: 'bold' },
   
   benchmarkGrid: { paddingHorizontal: 20, gap: 15, marginBottom: 30 },
   benchCard: { backgroundColor: '#1E1E1E', padding: 20, borderRadius: 16, borderWidth: 1, alignItems: 'center' },
@@ -527,16 +476,6 @@ const styles = StyleSheet.create({
   statBox: { flex: 1, backgroundColor: '#121212', padding: 15, borderRadius: 15, alignItems: 'center', borderWidth: 1, borderColor: '#222' },
   statNum: { color: '#fff', fontSize: 20, fontWeight: '900' },
   statLabel: { color: '#666', fontSize: 9, fontWeight: 'bold', marginTop: 4 },
-
-  modalContainer: { flex: 1, justifyContent: 'flex-end' },
-  modalContent: { height: '70%', backgroundColor: '#121212', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  modalTitle: { color: '#fff', fontSize: 14, fontWeight: '900', letterSpacing: 1 },
-  closeBtn: { padding: 5 },
-  inputLabel: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginBottom: 8, marginTop: 15 },
-  input: { backgroundColor: '#1E1E1E', borderRadius: 12, padding: 15, color: '#fff', fontSize: 16, borderWidth: 1, borderColor: '#333' },
-  saveBtn: { backgroundColor: '#FFD700', marginTop: 30, padding: 20, borderRadius: 20, alignItems: 'center', marginBottom: 20 },
-  saveBtnText: { color: '#000', fontWeight: '900', fontSize: 16 },
 
   certContainer: { flex: 1, justifyContent: 'center', padding: 20 },
   certCard: { backgroundColor: '#000', borderWidth: 2, borderRadius: 20, padding: 25, alignItems: 'center' },
@@ -571,4 +510,12 @@ const styles = StyleSheet.create({
   recCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#252525', padding: 15, borderRadius: 12, marginBottom: 8 },
   recTitle: { color: '#fff', fontSize: 14, fontWeight: '900' },
   recSub: { color: '#888', fontSize: 10, marginTop: 2, fontWeight: 'bold' },
+
+  // [NEW] PREDICTOR STYLES
+  predictorCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#111', padding: 15, borderRadius: 12, marginTop: 15, borderWidth: 1, borderColor: '#333' },
+  predLabel: { color: '#888', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  predTime: { color: '#fff', fontSize: 32, fontWeight: '900', fontFamily: 'Courier', marginTop: 4 },
+  predBadge: { backgroundColor: '#0A84FF', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginBottom: 4, alignSelf: 'flex-end' },
+  predBadgeText: { color: '#fff', fontSize: 9, fontWeight: 'bold' },
+  predSub: { color: '#666', fontSize: 9, fontStyle: 'italic', maxWidth: 120, textAlign: 'right' }
 });

@@ -3,15 +3,10 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import { LayoutAnimation, Platform, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, UIManager, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { WorkoutSplit } from './services/DataStore';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
-interface Split {
-  name: string;
-  actual: number;
-  target: number;
 }
 
 export default function LogDetails() {
@@ -19,9 +14,12 @@ export default function LogDetails() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
-  const [splits, setSplits] = useState<Split[]>([]);
+  const [splits, setSplits] = useState<WorkoutSplit[]>([]);
   const [totalTime, setTotalTime] = useState('--:--');
   const [date, setDate] = useState('');
+  const [completedAt, setCompletedAt] = useState('');
+  // [NEW] RPE State
+  const [rpe, setRpe] = useState<number | null>(null);
   
   const [expandedIndices, setExpandedIndices] = useState<Record<number, boolean>>({});
 
@@ -36,21 +34,10 @@ export default function LogDetails() {
     }
     if (params.totalTime) setTotalTime(params.totalTime as string);
     if (params.date) setDate(params.date as string);
-  }, [params.data, params.totalTime, params.date]);
-
-  // [FIX] DATE & TIME FORMATTER
-  // Converts "2026-02-03T21:40..." -> "FEB 03, 2026 • 21:40"
-  const formattedDateTime = useMemo(() => {
-      if (!date) return 'Unknown Date';
-      try {
-          const d = new Date(date);
-          const datePart = d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }).toUpperCase();
-          const timePart = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-          return `${datePart} • ${timePart}`;
-      } catch (e) {
-          return date; 
-      }
-  }, [date]);
+    if (params.completedAt) setCompletedAt(params.completedAt as string);
+    // [NEW] Parse RPE
+    if (params.rpe) setRpe(parseInt(params.rpe as string));
+  }, [params.data, params.totalTime, params.date, params.completedAt, params.rpe]);
 
   const validSplits = useMemo(() => splits.filter(s => s.name !== 'FINISH'), [splits]);
 
@@ -60,16 +47,12 @@ export default function LogDetails() {
   };
 
   const formatTime = (seconds: number) => {
-      if (!seconds || isNaN(seconds)) return "0:00";
       const m = Math.floor(seconds / 60);
-      const s = Math.round(seconds % 60);
+      const s = seconds % 60;
       return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
-  // --- INTELLIGENCE ENGINE ---
-  const { processedSplits, uniqueExercises, workSets, avgSplitTime } = useMemo(() => {
-      let totalWorkTime = 0;
-      
+  const { processedSplits, uniqueExercises, workSets } = useMemo(() => {
       const counts: Record<string, number> = {};
       const uniqueTypes = new Set<string>();
       let workSetCount = 0;
@@ -91,7 +74,6 @@ export default function LogDetails() {
               
               uniqueTypes.add(typeKey);
               workSetCount++;
-              totalWorkTime += (split.actual || 0);
           }
 
           let setNum = 0;
@@ -101,46 +83,40 @@ export default function LogDetails() {
               setNum = counts[typeKey];
           }
 
-          const distMatch = split.name.match(/(\d+(?:\.\d+)?)(km|m)/);
-          const weightMatch = split.name.match(/(Heavy|Light|Comp|\d+kg)/i);
-          const repsMatch = split.name.match(/^(\d+)\s/); 
+          const distanceVal = split.distance_m || 0;
+          let distanceStr = null;
+          let paceStr = null;
 
-          let distance = distMatch ? distMatch[0] : null;
-          let weight = weightMatch ? weightMatch[0] : null;
-          let reps = repsMatch ? repsMatch[1] : null;
-          if (typeKey === 'Run' || typeKey === 'Ski' || typeKey === 'Row') reps = null;
+          if (distanceVal > 0) {
+              if (distanceVal >= 1000) distanceStr = `${(distanceVal / 1000).toFixed(2)}km`;
+              else distanceStr = `${Math.round(distanceVal)}m`;
 
-          let pace = null;
-          if (distance && split.actual > 0 && !isRest) {
-              const distVal = parseFloat(distMatch![1]);
-              const unit = distMatch![2];
-              let meters = unit === 'km' ? distVal * 1000 : distVal;
-              if (meters > 0) {
-                  const secondsPerKm = split.actual / (meters / 1000);
+              if (split.actual > 0 && !isRest) {
+                  const secondsPerKm = split.actual / (distanceVal / 1000);
                   const pM = Math.floor(secondsPerKm / 60);
                   const pS = Math.round(secondsPerKm % 60);
-                  pace = `${pM}:${pS < 10 ? '0' : ''}${pS}/km`;
+                  paceStr = `${pM}:${pS < 10 ? '0' : ''}${pS}/km`;
               }
           }
+
+          const weightStr = split.weight_kg ? `${split.weight_kg}kg` : null;
+          const repsStr = split.reps ? `${split.reps}` : null;
 
           return {
               ...split,
               cleanName: baseName.toUpperCase(),
               typeKey,
               globalIndex: index + 1,
-              distance, weight, reps, pace, setNum, isRest,
+              distance: distanceStr, 
+              weight: weightStr, 
+              reps: repsStr, 
+              pace: paceStr, 
+              setNum, isRest,
               isExtra: split.name.includes('(EXTRA)')
           };
       });
 
-      const avg = workSetCount > 0 ? totalWorkTime / workSetCount : 0;
-
-      return { 
-          processedSplits: processed, 
-          uniqueExercises: uniqueTypes.size, 
-          workSets: workSetCount, 
-          avgSplitTime: avg 
-      };
+      return { processedSplits: processed, uniqueExercises: uniqueTypes.size, workSets: workSetCount };
   }, [validSplits]);
 
   useEffect(() => {
@@ -163,6 +139,13 @@ export default function LogDetails() {
       );
   };
 
+  // Helper for RPE Color
+  const getRpeColor = (val: number) => {
+      if (val <= 5) return '#32D74B'; // Green
+      if (val <= 8) return '#FFD700'; // Gold
+      return '#FF453A'; // Red
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
@@ -176,9 +159,8 @@ export default function LogDetails() {
             <Text style={styles.title}>
                 MISSION <Text style={{color: '#FFD700'}}>DEBRIEF</Text>
             </Text>
-            {/* [FIX] Display Date AND Time */}
             <Text style={styles.date}>
-                {formattedDateTime}
+                {date}{completedAt ? ` • ${completedAt}` : ''}
             </Text>
         </View>
         <View style={{width: 24}} /> 
@@ -200,10 +182,14 @@ export default function LogDetails() {
                 <Text style={styles.overviewLabel}>DURATION</Text>
                 <Text style={[styles.overviewValue, {fontSize: 24}]}>{totalTime}</Text>
             </View>
-            <View style={[styles.overviewCard, { borderTopColor: '#FF453A' }]}>
-                <Text style={styles.overviewLabel}>AVG PACE</Text>
-                <Text style={styles.overviewSub}>PER STATION</Text>
-                <Text style={[styles.overviewValue, {fontSize: 22}]}>{formatTime(avgSplitTime)}</Text>
+            
+            {/* [MODIFIED] Replaced Fastest Split with RPE */}
+            <View style={[styles.overviewCard, { borderTopColor: getRpeColor(rpe || 0) }]}>
+                <Text style={styles.overviewLabel}>INTENSITY</Text>
+                <Text style={styles.overviewSub}>RPE SCALE (1-10)</Text>
+                <Text style={[styles.overviewValue, {fontSize: 32, color: getRpeColor(rpe || 0)}]}>
+                    {rpe ? rpe : '-'}
+                </Text>
             </View>
         </View>
 
@@ -260,10 +246,10 @@ export default function LogDetails() {
                                 <View style={styles.detailRow}>
                                     {renderDetailItem("SET", item.isExtra ? `${item.setNum} (EXTRA)` : `${item.setNum}`)}
                                     {renderDetailItem("TIME", formatTime(item.actual))}
-                                    {item.distance && renderDetailItem("DIST", item.distance)}
-                                    {item.weight && renderDetailItem("KG", item.weight.toUpperCase())}
-                                    {item.reps && !item.distance && renderDetailItem("REPS", item.reps)}
-                                    {item.pace && renderDetailItem("PACE", item.pace)}
+                                    {renderDetailItem("DIST", item.distance)}
+                                    {renderDetailItem("KG", item.weight ? item.weight.toUpperCase() : null)}
+                                    {renderDetailItem("REPS", item.reps)}
+                                    {renderDetailItem("PACE", item.pace)}
                                 </View>
                             </View>
                         )}

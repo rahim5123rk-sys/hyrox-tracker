@@ -4,18 +4,18 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import React, { useRef, useState } from 'react';
 import {
-  Animated,
-  Dimensions,
-  FlatList,
-  Keyboard,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    Animated,
+    Dimensions,
+    FlatList,
+    Keyboard,
+    KeyboardAvoidingView,
+    Platform,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -141,6 +141,7 @@ export default function Onboarding() {
   };
 
   const generateWeeklyPlan = (userLevel: string) => {
+    const todayIdx = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
     const days = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
     const fullDays = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
     
@@ -153,6 +154,7 @@ export default function Onboarding() {
     if (userLevel === 'ELITE') template = ELITE_TEMPLATE;
 
     return days.map((d, i) => {
+        const initialStatus = i < todayIdx ? 'SKIPPED' : 'PENDING';
       const type = template[i];
       const isRest = type === 'Rest' || type === 'Recovery';
       const assignedMissionId = getMissionOrder(type, userLevel);
@@ -160,6 +162,7 @@ export default function Onboarding() {
 
       return {
         day: d,
+        status: initialStatus,
         fullDay: fullDays[i],
         type: type,
         title: assignedWorkout ? assignedWorkout.title : (isRest ? 'RECOVERY PROTOCOL' : `${type.toUpperCase()} SESSION`),
@@ -168,6 +171,7 @@ export default function Onboarding() {
         duration: isRest ? '0' : '60',
         rpe: isRest ? '0' : '7',
         complete: false
+        
       };
     });
   };

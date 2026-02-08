@@ -3,7 +3,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
-  AppState,
   Keyboard,
   KeyboardAvoidingView,
   Platform,
@@ -17,9 +16,8 @@ import {
   View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DataStore } from './services/DataStore';
-// [ARCHITECT] Single Source of Truth
 import { HYROX_STANDARDS, HyroxDivision } from '../constants/HyroxStandards';
+import { DataStore } from './services/DataStore';
 
 interface StepData {
   label: string;
@@ -33,7 +31,6 @@ export default function WorkoutActive() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
-  // PARAMS
   const sessionId = params.sessionId as string; 
   const titleParam = params.title as string;
   const initialStepsRaw: string[] = params.steps ? JSON.parse(params.steps as string) : [];
@@ -42,55 +39,52 @@ export default function WorkoutActive() {
   const [sessionTitle, setSessionTitle] = useState("");
   const [userCategory, setUserCategory] = useState<HyroxDivision>('MEN_OPEN');
   
-  // STATE
   const [activeSteps, setActiveSteps] = useState<StepData[]>([]);
   const [currentRound, setCurrentRound] = useState(1);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
   
-  // [ARCHITECT] DELTA TIMER STATE
-  // We track the exact timestamp when the workout/step started
   const sessionStartTime = useRef<number | null>(null);
   const stepStartTime = useRef<number | null>(null);
   
-  // Display state (updated by interval for UI only)
   const [totalSeconds, setTotalSeconds] = useState(0);
   const [stepSeconds, setStepSeconds] = useState(0); 
   
-  const [isActive, setIsActive] = useState(false); // Start false, wait for init
+  const [isActive, setIsActive] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [finalTonnage, setFinalTonnage] = useState(0);
   
+  // [NEW] RPE State
+  const [rpe, setRpe] = useState(7);
+  
   const scrollViewRef = useRef<ScrollView>(null);
-  const appState = useRef(AppState.currentState);
 
-  // 1. INITIALIZATION
   useEffect(() => {
     const init = async () => {
-        // [ARCHITECT] Dynamic Division Loading
         const cat = (await AsyncStorage.getItem('userCategory')) as HyroxDivision || 'MEN_OPEN';
         setUserCategory(cat);
         const standards = HYROX_STANDARDS[cat] || HYROX_STANDARDS.MEN_OPEN;
 
-        // Smart Parsing with Centralized Standards
         const steps: StepData[] = initialStepsRaw.map(stepText => {
             const up = stepText.toUpperCase();
             let defaultWeight = '';
             let isHeavy = false;
 
-            if (up.includes('SLED PUSH')) { isHeavy = true; defaultWeight = standards.SLED_PUSH; }
-            else if (up.includes('SLED PULL')) { isHeavy = true; defaultWeight = standards.SLED_PULL; }
-            else if (up.includes('LUNGE')) { isHeavy = true; defaultWeight = standards.LUNGE; }
-            else if (up.includes('WALL BALL')) { isHeavy = true; defaultWeight = standards.WALL_BALL; }
-            else if (up.includes('FARMER') || up.includes('CARRY')) { isHeavy = true; defaultWeight = standards.FARMER; }
-            else if (up.includes('KETTLEBELL') || up.includes('KB') || up.includes('SWING')) { isHeavy = true; defaultWeight = standards.KETTLEBELL; }
-            else if (up.includes('DEADLIFT')) { isHeavy = true; defaultWeight = standards.DEADLIFT; }
-            else if (up.includes('WEIGHT') || up.includes('HEAVY') || up.includes('BARBELL') || up.includes('DB')) { isHeavy = true; }
+            const isBodyweight = up.includes('LUNGE') || up.includes('BURPEE') || up.includes('JUMP') || up.includes('AIR SQUAT');
+
+            if (!isBodyweight) {
+                if (up.includes('SLED PUSH')) { isHeavy = true; defaultWeight = standards.SLED_PUSH; }
+                else if (up.includes('SLED PULL')) { isHeavy = true; defaultWeight = standards.SLED_PULL; }
+                else if (up.includes('WALL BALL')) { isHeavy = true; defaultWeight = standards.WALL_BALL; }
+                else if (up.includes('FARMER') || up.includes('CARRY')) { isHeavy = true; defaultWeight = standards.FARMER; }
+                else if (up.includes('KETTLEBELL') || up.includes('KB') || up.includes('SWING')) { isHeavy = true; defaultWeight = standards.KETTLEBELL; }
+                else if (up.includes('DEADLIFT')) { isHeavy = true; defaultWeight = standards.DEADLIFT; }
+                else if (up.includes('WEIGHT') || up.includes('HEAVY') || up.includes('BARBELL') || up.includes('DB')) { isHeavy = true; }
+            }
 
             return { label: stepText, isLoadBearing: isHeavy, weight: defaultWeight, duration: 0 };
         });
         setActiveSteps(steps);
         
-        // Start Timers
         const now = Date.now();
         sessionStartTime.current = now;
         stepStartTime.current = now;
@@ -102,7 +96,6 @@ export default function WorkoutActive() {
     setSessionTitle(`${hour < 12 ? 'MORNING' : hour < 18 ? 'AFTERNOON' : 'EVENING'} PROTOCOL`);
   }, []);
 
-  // 2. [ARCHITECT] ROBUST TIMER LOOP
   useEffect(() => {
     let interval: NodeJS.Timeout;
 
@@ -115,13 +108,12 @@ export default function WorkoutActive() {
         if (stepStartTime.current) {
             setStepSeconds(Math.floor((now - stepStartTime.current) / 1000));
         }
-      }, 200); // 200ms update for smoother feel, but math is absolute
+      }, 200);
     }
 
     return () => clearInterval(interval);
   }, [isActive, showSummary]);
 
-  // 3. ACTIONS
   const updateStepWeight = (val: string) => {
       const updated = [...activeSteps];
       updated[currentStepIdx].weight = val;
@@ -131,7 +123,6 @@ export default function WorkoutActive() {
   const handleNext = () => {
     Vibration.vibrate(50); 
     
-    // Lock in duration for this step (Current Time - Step Start Time)
     const now = Date.now();
     const duration = stepStartTime.current ? Math.floor((now - stepStartTime.current) / 1000) : 0;
     
@@ -140,23 +131,17 @@ export default function WorkoutActive() {
     setActiveSteps(updated);
 
     if (currentStepIdx < activeSteps.length - 1) {
-      // ADVANCE STEP
       setCurrentStepIdx(prev => prev + 1);
-      stepStartTime.current = now; // Reset Step Timer
+      stepStartTime.current = now;
       setStepSeconds(0);
-      
-      // Smooth Scroll
       scrollViewRef.current?.scrollTo({ y: (currentStepIdx + 1) * 90, animated: true });
     } else {
-      // END OF ROUND
       if (currentRound < totalRounds) {
         setCurrentRound(prev => prev + 1);
         setCurrentStepIdx(0);
-        
         stepStartTime.current = now;
         setStepSeconds(0);
         
-        // [UX] Reset durations for new round, but KEEP weights (Smart Memory)
         const nextSteps = activeSteps.map(s => ({ ...s, duration: 0 }));
         setActiveSteps(nextSteps);
         
@@ -169,7 +154,6 @@ export default function WorkoutActive() {
   };
 
   const finishWorkout = () => {
-    // Calculate Final Tonnage
     let totalLoad = 0;
     activeSteps.forEach(s => {
         const w = parseFloat(s.weight);
@@ -184,13 +168,21 @@ export default function WorkoutActive() {
   const saveAndExit = async () => {
     const completionTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     
-    // Construct Splits
-    const finalSplits = activeSteps.map(s => ({
-        name: s.label,
-        time: s.duration, 
-        actual: s.duration,
-        target: 0
-    }));
+    const finalSplits = activeSteps.map(s => {
+        const w = parseFloat(s.weight);
+        let r = 0;
+        const repMatch = s.label.match(/^(\d+)\s/);
+        if (repMatch) r = parseInt(repMatch[1]);
+
+        return {
+            name: s.label,
+            time: s.duration, 
+            actual: s.duration,
+            target: 0,
+            weight_kg: isNaN(w) ? 0 : w,
+            reps: r
+        };
+    });
 
     try {
         const newLog = {
@@ -203,23 +195,22 @@ export default function WorkoutActive() {
           splits: finalSplits,
           details: {
               weight: finalTonnage.toString(),
-              // [ARCHITECT] FIX: Force reps to "1" to prevent double-multiplication in SQL
               reps: "1", 
-              note: `Completed ${totalRounds} Rounds via Smart Logbook`
+              note: `Completed ${totalRounds} Rounds via Smart Logbook`,
+              // [NEW] Capture RPE
+              rpe: rpe
           }
         };
 
-        // Write to Vault
         await DataStore.logEvent(newLog);
         
-        // Update Planner (Legacy Support)
         if (sessionId) {
             const planJson = await AsyncStorage.getItem('active_weekly_plan');
             if (planJson) {
                 let plan = JSON.parse(planJson);
                 plan = plan.map((session: any) => {
                     if (session.id === sessionId) {
-                        return { ...session, status: 'COMPLETED', feedback: { rpeActual: 8 } };
+                        return { ...session, status: 'COMPLETED', feedback: { rpeActual: rpe } };
                     }
                     return session;
                 });
@@ -242,26 +233,50 @@ export default function WorkoutActive() {
     return (
       <View style={[styles.container, { paddingTop: insets.top + 20 }]}>
         <StatusBar barStyle="light-content" />
-        <View style={{alignItems:'center', marginTop: 40}}>
-            <Ionicons name="checkmark-circle" size={64} color="#FFD700" />
+        <View style={{alignItems:'center', marginTop: 30}}>
+            <Ionicons name="checkmark-circle" size={50} color="#FFD700" />
             <Text style={styles.summaryHeader}>MISSION COMPLETE</Text>
             <Text style={styles.totalTimeLarge}>{formatTime(totalSeconds)}</Text>
         </View>
 
         <View style={styles.statGrid}>
             <View style={styles.statBox}>
-                <Text style={styles.statLabel}>TOTAL TONNAGE</Text>
-                <Text style={styles.statValue}>{finalTonnage} KG</Text>
-                <Text style={styles.statSub}>VOLUME LOAD</Text>
+                <Text style={styles.statLabel}>TONNAGE</Text>
+                <Text style={styles.statValue}>{finalTonnage}</Text>
+                <Text style={styles.statSub}>KG LOAD</Text>
             </View>
             <View style={styles.statBox}>
                 <Text style={styles.statLabel}>ROUNDS</Text>
                 <Text style={styles.statValue}>{totalRounds}</Text>
+                <Text style={styles.statSub}>COMPLETED</Text>
             </View>
         </View>
+
+        {/* [NEW] RPE SELECTOR */}
+        <View style={styles.rpeSection}>
+            <Text style={styles.rpeHeader}>RATE INTENSITY (RPE)</Text>
+            <View style={styles.rpeRow}>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
+                    <TouchableOpacity 
+                        key={num} 
+                        style={[
+                            styles.rpeBtn, 
+                            rpe === num && { backgroundColor: num > 7 ? '#FF453A' : '#FFD700', borderColor: num > 7 ? '#FF453A' : '#FFD700' }
+                        ]}
+                        onPress={() => setRpe(num)}
+                    >
+                        <Text style={[styles.rpeNum, rpe === num && { color: '#000' }]}>{num}</Text>
+                    </TouchableOpacity>
+                ))}
+            </View>
+            <Text style={styles.rpeDesc}>
+                {rpe <= 4 ? "LIGHT RECOVERY" : rpe <= 7 ? "MODERATE EFFORT" : "MAXIMUM EXERTION"}
+            </Text>
+        </View>
+
         <View style={{flex: 1}} />
         <TouchableOpacity style={styles.saveBtn} onPress={saveAndExit}>
-          <Text style={styles.saveBtnText}>SAVE LOGBOOK</Text>
+          <Text style={styles.saveBtnText}>CONFIRM & SAVE</Text>
         </TouchableOpacity>
       </View>
     );
@@ -312,10 +327,7 @@ export default function WorkoutActive() {
                 ]}
                 onPress={() => isCurrent && Keyboard.dismiss()} 
             >
-                {/* --- SAFE LAYOUT ROW --- */}
                 <View style={styles.cardRow}>
-                    
-                    {/* LEFT: Icon & Text */}
                     <View style={styles.leftContent}>
                         <View style={[styles.statusIcon, isCurrent && styles.statusIconActive, isCompleted && styles.statusIconDone]}>
                             {isCompleted ? <Ionicons name="checkmark" size={16} color="#000" /> : <Text style={[styles.stepNum, isCurrent && {color: '#000'}]}>{index + 1}</Text>}
@@ -328,12 +340,9 @@ export default function WorkoutActive() {
                         </View>
                     </View>
 
-                    {/* RIGHT: Timer & Inputs */}
                     <View style={styles.rightContent}>
-                         {/* Timer */}
                          {isCurrent && <Text style={styles.stepTimer}>{formatTime(stepSeconds)}</Text>}
                          
-                         {/* Input Box */}
                          {step.isLoadBearing && isCurrent && (
                              <View style={styles.compactInputWrapper}>
                                 <TextInput 
@@ -349,7 +358,6 @@ export default function WorkoutActive() {
                              </View>
                          )}
 
-                         {/* Read Only Load */}
                          {step.isLoadBearing && !isCurrent && step.weight !== '' && (
                             <View style={styles.readOnlyLoad}>
                                 <Text style={styles.readOnlyLoadText}>{step.weight}kg</Text>
@@ -390,7 +398,6 @@ const styles = StyleSheet.create({
   progressBarFill: { height: '100%', backgroundColor: '#FFD700', borderRadius: 2 },
   
   listContainer: { flex: 1 },
-  // [LAYOUT] Flex-Safe Container
   stepCard: { backgroundColor: '#111', padding: 15, borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: '#222', width: '100%' },
   stepCardActive: { backgroundColor: '#1A1A1A', borderColor: '#FFD700', shadowColor: "#FFD700", shadowOffset: {width: 0, height: 0}, shadowOpacity: 0.2, shadowRadius: 10, zIndex: 10 },
   stepCardDone: { opacity: 0.4 },
@@ -424,11 +431,19 @@ const styles = StyleSheet.create({
   
   summaryHeader: { color: '#fff', fontSize: 24, fontWeight: '900', marginTop: 15, letterSpacing: 1 },
   totalTimeLarge: { color: '#FFD700', fontSize: 60, fontWeight: 'bold', marginVertical: 10, fontVariant: ['tabular-nums'] },
-  statGrid: { flexDirection: 'row', gap: 15, marginTop: 30 },
-  statBox: { flex: 1, backgroundColor: '#1A1A1A', padding: 20, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  statGrid: { flexDirection: 'row', gap: 15, marginTop: 20 },
+  statBox: { flex: 1, backgroundColor: '#1A1A1A', padding: 15, borderRadius: 16, alignItems: 'center', borderWidth: 1, borderColor: '#333' },
   statLabel: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 5 },
   statValue: { color: '#fff', fontSize: 24, fontWeight: '900' },
   statSub: { color: '#444', fontSize: 9, marginTop: 5, fontWeight: 'bold' },
   saveBtn: { backgroundColor: '#FFD700', height: 70, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 20 },
   saveBtnText: { color: '#000', fontSize: 18, fontWeight: '900', letterSpacing: 1 },
+
+  // [NEW] RPE STYLES
+  rpeSection: { marginTop: 30, width: '100%', alignItems: 'center' },
+  rpeHeader: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 15, letterSpacing: 1 },
+  rpeRow: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginBottom: 10 },
+  rpeBtn: { width: 30, height: 35, borderRadius: 6, borderWidth: 1, borderColor: '#333', justifyContent: 'center', alignItems: 'center', backgroundColor: '#111' },
+  rpeNum: { color: '#666', fontSize: 12, fontWeight: '900' },
+  rpeDesc: { color: '#FFD700', fontSize: 12, fontWeight: 'bold', fontStyle: 'italic', marginTop: 10 }
 });

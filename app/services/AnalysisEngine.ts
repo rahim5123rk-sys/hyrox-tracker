@@ -1,5 +1,5 @@
 import { ALL_WORKOUTS } from '../data/workouts';
-import { AnalyticsProfile } from './DataStore';
+import { AnalyticsProfile, METRICS } from './DataStore';
 
 export interface AnalysisReport {
   archetype: string;
@@ -10,10 +10,21 @@ export interface AnalysisReport {
   tacticalAdvice: string[];
   radarAnalysis: string;
   recommendedWorkouts: any[];
+  // [NEW] Centralized Intelligence Fields
+  bioSignature: {
+      speed: number;
+      power: number;
+      engine: number;
+      grit: number;
+      consistency: number;
+  };
+  racePrediction: {
+      totalTime: string;
+      splitAnalysis: string;
+  };
 }
 
-// [UPDATE] DYNAMIC ELITE STANDARDS (Seconds)
-// Based on Top 5% Finisher Data (True Elite for that Division)
+// DYNAMIC ELITE STANDARDS (Seconds)
 const ELITE_STANDARDS: Record<string, any> = {
     MEN_PRO: {
         RUN_PACE: 210,  // 3:30/km
@@ -63,7 +74,7 @@ const ELITE_STANDARDS: Record<string, any> = {
         WALLBALLS: 270, // 4:30
         ROXZONE: 300    // 5:00 Total
     },
-    // DOUBLES: Faster stations (split work), similiar run pace
+    // DOUBLES
     DOUBLES_MEN: {
         RUN_PACE: 230, SKI: 120, SLED_PUSH: 80, SLED_PULL: 100, BURPEES: 120,
         ROW: 120, FARMERS: 60, LUNGES: 110, WALLBALLS: 120, ROXZONE: 200
@@ -80,38 +91,33 @@ const ELITE_STANDARDS: Record<string, any> = {
 
 export const AnalysisEngine = {
   
-  // [UPDATE] Now accepts 'category' to select the correct benchmark
   generateReport(stats: AnalyticsProfile, category: string = 'MEN_OPEN'): AnalysisReport {
     
     // 1. SELECT BENCHMARK
     const ELITE = ELITE_STANDARDS[category] || ELITE_STANDARDS.MEN_OPEN;
 
-    // 2. DATA EXTRACTION (Most Recent Valid)
-    // [NOTE] Includes Bio-Decay logic if you added it, otherwise standard extraction
-    const ONE_DAY = 24 * 60 * 60 * 1000;
-    const NOW = Date.now();
-    
+    // 2. DATA EXTRACTION
     const get = (arr: number[]) => {
         const clean = arr.filter(n => n > 0);
         return clean.length > 0 ? clean[clean.length - 1] : 0;
     };
 
     // Physiology
-    const runPace = get(stats.trends.runPace);
-    const fatigue = get(stats.trends.fatigueIndex);
-    const roxzone = get(stats.trends.roxzone);
+    const runPace = get(stats.trends[METRICS.RUN_PACE]);
+    const fatigue = get(stats.trends[METRICS.FATIGUE]);
+    const roxzone = get(stats.trends[METRICS.ROXZONE]);
     
     // Stations
-    const ski = get(stats.trends.skiErg);
-    const push = get(stats.trends.sledPush);
-    const pull = get(stats.trends.sledPull);
-    const burpees = get(stats.trends.burpees);
-    const row = get(stats.trends.rowing);
-    const farmers = get(stats.trends.farmers);
-    const lunges = get(stats.trends.lunges);
-    const wallBalls = get(stats.trends.wallBalls);
+    const ski = get(stats.trends[METRICS.SKI_ERG]);
+    const push = get(stats.trends[METRICS.SLED_PUSH]);
+    const pull = get(stats.trends[METRICS.SLED_PULL]);
+    const burpees = get(stats.trends[METRICS.BURPEES]);
+    const row = get(stats.trends[METRICS.ROWING]);
+    const farmers = get(stats.trends[METRICS.FARMERS]);
+    const lunges = get(stats.trends[METRICS.LUNGES]);
+    const wallBalls = get(stats.trends[METRICS.WALL_BALLS]);
 
-    // 3. CALCULATE "BLEED" (Performance Deficit vs SELECTED Elite)
+    // 3. CALCULATE "BLEED"
     const bleed = (actual: number, goal: number) => (actual > 0) ? (actual - goal) / goal : 0;
 
     const b = {
@@ -143,116 +149,128 @@ export const AnalysisEngine = {
     const worstStation = stations[0];
     const secondWorst = stations[1];
 
-    // 5. DIAGNOSTIC LOGIC TREE (Archetype Detection)
+    // --- 5. NEW: CENTRALIZED BIO-SIGNATURE ---
+    const calculateScore = (val: number, elite: number, rookie: number) => {
+          if (!val) return 0;
+          if (val <= elite) return 100;
+          if (val >= rookie) return 20;
+          return Math.round(20 + ((rookie - val) / (rookie - elite)) * 80);
+    };
+    
+    // Using MEN_OPEN/PRO averages to set the "Scale" for the radar chart
+    // Speed: 4:00/km (Elite) to 7:00/km (Rookie) -> 240s to 420s
+    // Power: 2:00 (Elite) to 5:00 (Rookie) for Sled Push -> 120s to 300s
+    // Engine: 3:50 (Elite) to 6:00 (Rookie) for Ski/Row -> 230s to 360s
+    
+    const bio = {
+        speed: calculateScore(runPace, 240, 420),
+        power: calculateScore(push, 120, 300),
+        engine: calculateScore((ski + row)/2, 230, 360),
+        grit: Math.max(0, 100 - (fatigue * 2)), 
+        consistency: stats.consistencyScore || 0
+    };
+
+    // --- 6. NEW: RACE PREDICTOR ---
+    // Formula: (Avg Run Pace * 8) + (Sum of Stations) + (Est. Roxzone)
+    // If no data for a station, we default to "Rookie" pace (safe estimate)
+    const safe = (val: number, def: number) => val > 0 ? val : def;
+    
+    const totalRunTime = safe(runPace, 360) * 8; // 8km total
+    
+    const totalStationTime = 
+        safe(ski, 300) + 
+        safe(push, 180) + 
+        safe(pull, 240) + 
+        safe(burpees, 360) + 
+        safe(row, 300) + 
+        safe(farmers, 120) + 
+        safe(lunges, 300) + 
+        safe(wallBalls, 300);
+        
+    // Est Roxzone: Base 5:00 (300s) + penalty for low fitness
+    // If Engine is 100 (Elite), Roxzone -> 300s
+    // If Engine is 20 (Rookie), Roxzone -> 300 + (80 * 2) = 460s
+    const estRox = 300 + ((100 - bio.engine) * 2); 
+    
+    const predictedSeconds = totalRunTime + totalStationTime + estRox;
+    
+    const pM = Math.floor(predictedSeconds / 60);
+    const pS = Math.round(predictedSeconds % 60);
+    const predTime = `${Math.floor(pM/60)}:${(pM%60).toString().padStart(2,'0')}:${pS.toString().padStart(2,'0')}`;
+
+    let splitAnalysis = "Data suggests a balanced race.";
+    if (bio.power < 40) splitAnalysis = "Heavy Sleds are adding ~4 mins to your time.";
+    else if (bio.speed < 40) splitAnalysis = "Running pace is the primary bottleneck.";
+    else if (bio.grit < 40) splitAnalysis = "Fade in second half costs you ~3 mins.";
+
+    // 7. DIAGNOSTIC LOGIC (Archetype)
     let archetype = "THE ROOKIE";
     let desc = "Metrics established. Ready for optimization.";
     let advice: string[] = [];
     let focus = "GENERAL";
     let radarText = "Balanced profile detected.";
 
-    // --- SCENARIO A: THE "LAZY" (Roxzone is worst) ---
     if (b.rox > 0.5 && b.rox > worstStation.val) {
         archetype = "THE TOURIST";
         desc = "Your engine is fine, but you are hemorrhaging time walking between stations.";
-        advice = [
-            "RULE #1: Never walk. Jog every transition.",
-            "Water strategy: Drink ONLY at R4 and R7.",
-            "Visualise the layout. Run exact lines."
-        ];
+        advice = ["RULE #1: Never walk. Jog every transition.", "Water strategy: Drink ONLY at R4 and R7.", "Visualise the layout. Run exact lines."];
         focus = "HYBRID";
         radarText = "Fitness scores appear artificially low due to transition inefficiency.";
     }
-    // --- SCENARIO B: THE "GASSER" (Fatigue > 15%) ---
     else if (fatigue > 15) {
         archetype = "THE RED-LINER";
         desc = "You fly out of the gate but suffer catastrophic system failure after 40 minutes.";
-        advice = [
-            `Slower Start: Add 10-15s per km to Run 1-3.`,
-            "Compromised Running: Train legs immediately before running.",
-            "Increase Zone 2 volume to build metabolic durability."
-        ];
+        advice = [`Slower Start: Add 10-15s per km to Run 1-3.`, "Compromised Running: Train legs immediately before running.", "Increase Zone 2 volume to build metabolic durability."];
         focus = "ENDURANCE";
         radarText = "Bio-signature shows high peak power but critical lack of 'Grit'.";
     }
-    // --- SCENARIO C: THE "MARATHONER" (Fast Run, Weak Sleds) ---
     else if (b.run < 0.2 && (b.push > 0.4 || b.pull > 0.4)) {
         archetype = "THE MARATHONER";
         desc = "Elite lungs, but you crumple under the heavy weights. The sleds are burying you.";
-        advice = [
-            "Heavy Sled Pushes (150kg+) 2x per week.",
-            "Posterior Chain: Heavy Deadlifts and Sled Pulls.",
-            "Your running gives you a buffer—spend it on getting stronger."
-        ];
+        advice = ["Heavy Sled Pushes (150kg+) 2x per week.", "Posterior Chain: Heavy Deadlifts and Sled Pulls.", "Your running gives you a buffer—spend it on getting stronger."];
         focus = "STRENGTH";
         radarText = "High 'Speed' score heavily compromised by low 'Power' metrics.";
     }
-    // --- SCENARIO D: THE "TANK" (Strong Sleds, Slow Run) ---
     else if (b.push < 0.2 && b.run > 0.4) {
         archetype = "THE TANK";
         desc = "You dominate the functional stations but lose minutes on the track.";
-        advice = [
-            "Speed Work: 1km repeats at target race pace.",
-            "Weight Management: Optimize power-to-weight ratio.",
-            "Cadence Drills: Improve running economy."
-        ];
+        advice = ["Speed Work: 1km repeats at target race pace.", "Weight Management: Optimize power-to-weight ratio.", "Cadence Drills: Improve running economy."];
         focus = "SPEED";
         radarText = "Dominant 'Power' score. 'Speed' is the sole limiting factor.";
     }
-    // --- SCENARIO E: THE "LIFTER" (Good Farmers/Lunges, Bad Cardio) ---
     else if (b.farm < 0.2 && b.lunge < 0.2 && (b.row > 0.4 || b.ski > 0.4)) {
         archetype = "THE LIFTER";
         desc = "Static strength is elite, but sustained aerobic output (Ski/Row) is weak.";
-        advice = [
-            "Long intervals on Ergometers (2000m+ Row/Ski).",
-            "Force the lungs to work, not just the muscles.",
-            "HIIT: 30s Sprint / 30s Rest cycles."
-        ];
+        advice = ["Long intervals on Ergometers (2000m+ Row/Ski).", "Force the lungs to work, not just the muscles.", "HIIT: 30s Sprint / 30s Rest cycles."];
         focus = "AEROBIC";
         radarText = "Strength metrics are solid. 'Engine' capacity needs expansion.";
     }
-    // --- SCENARIO F: THE "PAIN CAVE VICTIM" (Bad Burpees/Wall Balls) ---
     else if (b.burpee > 0.4 || b.wall > 0.4) {
         archetype = "LACTATE INTOLERANT";
         desc = "You panic when the heart rate spikes on bodyweight movement. High lactate buildup.";
-        advice = [
-            "EMOMs: 15 Burpees on the minute for 10 min.",
-            "Wall Ball volume: Sets of 50 unbroken.",
-            "Practice 'flushing' legs with easy jogging after sets."
-        ];
+        advice = ["EMOMs: 15 Burpees on the minute for 10 min.", "Wall Ball volume: Sets of 50 unbroken.", "Practice 'flushing' legs with easy jogging after sets."];
         focus = "HIIT";
         radarText = "Profile shows weakness in high-cycle bodyweight endurance.";
     }
-    // --- SCENARIO G: BALANCED BUT AVERAGE ---
     else if (b.run > 0.2 && b.push > 0.2) {
         archetype = "THE OPERATOR";
         desc = "Well-rounded, but lacking a 'superpower'. You need global elevation.";
-        advice = [
-            "Increase overall training volume.",
-            "Focus on the station with the highest bleed: " + worstStation.id,
-            "Refine pacing strategy for marginal gains."
-        ];
+        advice = ["Increase overall training volume.", "Focus on the station with the highest bleed: " + worstStation.id, "Refine pacing strategy for marginal gains."];
         focus = "ADVANCED";
         radarText = "Symmetrical profile. Expand the entire perimeter.";
     }
-    // --- SCENARIO H: ELITE ---
     else if (b.run < 0.1 && b.push < 0.1) {
         archetype = "THE PRO";
         desc = "Exceptional metric balance. You are in striking distance of the podium.";
-        advice = [
-            "Maintain intensity. Avoid injury.",
-            "Focus on 1% improvements in transitions.",
-            "Race simulation is your primary training tool."
-        ];
+        advice = ["Maintain intensity. Avoid injury.", "Focus on 1% improvements in transitions.", "Race simulation is your primary training tool."];
         focus = "ELITE";
         radarText = "Nearly flawless bio-signature. Maximized potential.";
     }
 
-    // 6. GENERATE STATION SPECIFIC ADVICE (If not covered above)
     if (advice.length < 3) {
         advice.push(`Drill your weakness: ${worstStation.id} is your biggest bleed.`);
     }
 
-    // 7. RECOMMEND WORKOUTS
     const filterKey = focus === "ELITE" ? "ADVANCED" : focus;
     const recommended = ALL_WORKOUTS
         .filter(w => w.type.toUpperCase().includes(filterKey) || w.station.toUpperCase().includes(filterKey))
@@ -268,7 +286,12 @@ export const AnalysisEngine = {
         focusArea: focus,
         tacticalAdvice: advice,
         radarAnalysis: radarText,
-        recommendedWorkouts: recommended
+        recommendedWorkouts: recommended,
+        bioSignature: bio,
+        racePrediction: {
+            totalTime: predTime,
+            splitAnalysis: splitAnalysis
+        }
     };
   }
 };

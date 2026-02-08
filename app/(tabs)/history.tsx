@@ -3,7 +3,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { Alert, FlatList, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DataStore } from '../services/DataStore'; // [ARCHITECT] Connected to DB
+import { DataStore } from '../services/DataStore';
 
 export default function History() {
   const router = useRouter();
@@ -11,7 +11,6 @@ export default function History() {
   const [history, setHistory] = useState<any[]>([]);
   const [filter, setFilter] = useState<'ALL' | 'SIMS' | 'LAB' | 'LOGS'>('ALL');
 
-  // [ARCHITECT] Refresh on focus ensures consistency with Planner/Home
   useFocusEffect(
     useCallback(() => {
       loadHistory();
@@ -37,7 +36,6 @@ export default function History() {
                   text: "DELETE ALL", 
                   style: "destructive", 
                   onPress: async () => {
-                      // [FIX] Use DataStore to wipe (Nuclear Option)
                       await DataStore.clearAll();
                       setHistory([]);
                   }
@@ -69,8 +67,6 @@ export default function History() {
   const renderItem = ({ item }: { item: any }) => {
     const style = getLogStyle(item);
 
-    // [FIX] Derive readable time from ISO date string
-    // Prevents "03T21:40..." errors by parsing the Date object
     const dateObj = new Date(item.date);
     const timeString = dateObj.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     const dateString = dateObj.toDateString();
@@ -80,9 +76,21 @@ export default function History() {
         style={[styles.card, { borderLeftColor: style.color }]}
         activeOpacity={0.9}
         onPress={() => {
+          // [ARCHITECT] INTELLIGENT ROUTING
           if (item.sessionType === 'QUICK LOG') {
+               // 1. Manual Logs -> Manual Editor
                router.push({ pathname: '/manual_log_details', params: { data: JSON.stringify(item) } });
+          } else if (item.type === 'SIMULATION') {
+               // 2. Race Simulations -> High Fidelity "Results" Screen (Mission Debrief)
+               router.push({ 
+                   pathname: '/results', 
+                   params: { 
+                       data: JSON.stringify(item.splits), 
+                       totalTime: item.totalTime 
+                   } 
+               });
           } else {
+               // 3. Standard Workouts -> Standard Detail View
                router.push({ 
                   pathname: '/log_details', 
                   params: { 
@@ -90,7 +98,8 @@ export default function History() {
                       date: item.date,
                       totalTime: item.totalTime,
                       sessionType: item.sessionType,
-                      completedAt: timeString // [FIX] Pass derived time
+                      completedAt: timeString,
+                      rpe: item.details?.rpe || 0 
                   } 
                });
           }
@@ -102,7 +111,6 @@ export default function History() {
                   <Ionicons name={style.icon as any} size={12} color={style.color} />
                   <Text style={[styles.typeText, { color: style.color }]}>{style.label}</Text>
               </View>
-              {/* [FIX] Display derived time */}
               <Text style={styles.timestamp}>{timeString}</Text>
           </View>
 
@@ -113,7 +121,6 @@ export default function History() {
               <Text style={styles.totalTime}>{item.totalTime}</Text>
           </View>
           
-          {/* [FIX] Display derived date */}
           <Text style={styles.cardDate}>{dateString}</Text>
         </View>
         
