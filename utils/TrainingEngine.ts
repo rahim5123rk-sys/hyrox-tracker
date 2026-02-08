@@ -17,7 +17,9 @@ export interface TrainingSession {
   dayIndex: number; 
   workoutId?: string;
   title: string;
-  type: 'ENGINE' | 'STRENGTH' | 'MIXED' | 'SIMULATION' | 'RECOVERY';
+  // [FIX] Added 'REST' to type definition if you really need legacy support, 
+  // but better to stick to 'RECOVERY' for consistency. 
+  type: 'ENGINE' | 'STRENGTH' | 'MIXED' | 'SIMULATION' | 'RECOVERY'; 
   intent: string;
   duration: number;
   rpeTarget: number;
@@ -30,7 +32,6 @@ export interface TrainingSession {
   };
 }
 
-// --- RECOVERY ROUTINES (These are NOT in your workouts file, they are for Rest Days) ---
 const RECOVERY_ROUTINES = [
     {
         title: "SYSTEM FLUSH",
@@ -49,10 +50,9 @@ const RECOVERY_ROUTINES = [
     }
 ];
 
-// --- FALLBACK (Only appears if something breaks) ---
 const SAFE_WORKOUT = {
     id: 'fallback-safe',
-    title: 'BASE CONDITIONING', // <--- If you see this, the database connection failed
+    title: 'BASE CONDITIONING',
     station: 'RUN',
     type: 'ENGINE',
     estTime: '45 MINS',
@@ -112,52 +112,56 @@ export const TrainingEngine = {
 
       if (profile.athleteType === 'LIFTER' && type === 'STRENGTH' && day === 4) type = 'ENGINE';
 
-      // --- UPDATED FILTER LOGIC ---
+      // --- [CRITICAL FIX] UPDATED FILTER LOGIC TO MATCH workouts.ts ---
       const db = (Array.isArray(ALL_WORKOUTS) && ALL_WORKOUTS.length > 0) ? ALL_WORKOUTS : [SAFE_WORKOUT];
 
       let candidates = db.filter(w => {
         if (!w || !w.type) return false;
+        const wType = w.type.toUpperCase();
+        const wStation = w.station.toUpperCase();
 
-        // ENGINE: Catch Endurance, Aerobic, Threshold, Power (Ski/Row)
+        // ENGINE: Look for RUN, ROWING, SKI
         if (type === 'ENGINE') {
-            return ['ENDURANCE', 'AEROBIC', 'THRESHOLD', 'POWER'].includes(w.type) && 
-                   ['RUN', 'ROWING', 'SKI ERG'].includes(w.station || '');
+            return (wType === 'RUN' || wType === 'SPEED' || wType === 'ENDURANCE') || 
+                   ['RUN', 'ROWING', 'SKI ERG'].includes(wStation);
         }
 
-        // STRENGTH: Catch Sleds, Wall Balls, Farmers, Lunges, Burpees
+        // STRENGTH: Look for STRENGTH type or heavy stations
         if (type === 'STRENGTH') {
-            return ['SLED PUSH', 'SLED PULL', 'WALL BALLS', 'FARMERS', 'LUNGES', 'BURPEES'].includes(w.station || '');
+            return wType === 'STRENGTH' || 
+                   ['SLED PUSH', 'SLED PULL', 'WALL BALLS', 'FARMERS', 'LUNGES', 'BURPEES'].includes(wStation);
         }
 
-        // SIMULATION: Catch actual Simulations
+        // SIMULATION
         if (type === 'SIMULATION') {
-            return w.type === 'SIMULATION' || w.title.includes('SIM');
+            return wType === 'SIMULATION' || w.title.includes('SIM');
         }
 
-        // MIXED: Catch Hybrids, Compromised, Speed, Explosive
+        // MIXED: Hybrids
         if (type === 'MIXED') {
-            return ['HYBRID', 'COMPROMISED', 'SPEED', 'EXPLOSIVE', 'LEGS'].includes(w.type) || w.station === 'HYBRID';
+            return wType === 'HYBRID' || wType === 'COMPROMISED' || wStation === 'HYBRID';
         }
         
         return false;
       });
 
-      // FALLBACK: If specific filter fails, just give any workout of the broader category to ensure VARIETY
+      // FALLBACK
       if (candidates.length === 0) {
-          if (type === 'ENGINE') candidates = db.filter(w => ['ROWING', 'SKI ERG'].includes(w.station || ''));
-          else if (type === 'STRENGTH') candidates = db.filter(w => !['ROWING', 'SKI ERG', 'HYBRID'].includes(w.station || ''));
+          if (type === 'ENGINE') candidates = db.filter(w => ['ROWING', 'SKI ERG', 'RUN'].includes(w.station));
+          else if (type === 'STRENGTH') candidates = db.filter(w => w.type === 'STRENGTH');
           else candidates = db.filter(w => w.station === 'HYBRID');
       }
       
-      // FINAL FALLBACK
+      // FINAL SAFETY NET
       if (candidates.length === 0) candidates = db;
 
       const selected = candidates[Math.floor(Math.random() * candidates.length)] || SAFE_WORKOUT;
 
+      // Safe Duration Parsing
       let durationVal = 60;
       if (selected.estTime) {
-          const parsed = parseInt(selected.estTime);
-          if (!isNaN(parsed)) durationVal = parsed;
+          const digits = selected.estTime.match(/\d+/);
+          if (digits) durationVal = parseInt(digits[0]);
       }
 
       let targetRpe = 7;
@@ -169,7 +173,9 @@ export const TrainingEngine = {
         dayIndex: day,
         workoutId: selected.id || 'unknown',
         title: selected.title || 'Training Session',
-        type: type,
+        // [FIX] Ensure type matches the Interface (ENGINE, STRENGTH, etc.)
+        // We set the PLANNED type, not the workout's internal type, to keep colors consistent
+        type: type, 
         intent: INTENTS[type] || "Train Hard",
         duration: durationVal,
         rpeTarget: Math.min(10, targetRpe),

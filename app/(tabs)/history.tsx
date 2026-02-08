@@ -1,10 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { Alert, FlatList, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DataStore } from '../services/DataStore';
+import { DataStore } from '../services/DataStore'; // [ARCHITECT] Connected to DB
 
 export default function History() {
   const router = useRouter();
@@ -12,6 +11,7 @@ export default function History() {
   const [history, setHistory] = useState<any[]>([]);
   const [filter, setFilter] = useState<'ALL' | 'SIMS' | 'LAB' | 'LOGS'>('ALL');
 
+  // [ARCHITECT] Refresh on focus ensures consistency with Planner/Home
   useFocusEffect(
     useCallback(() => {
       loadHistory();
@@ -21,7 +21,7 @@ export default function History() {
   const loadHistory = async () => {
     try {
       const data = await DataStore.getHistory();
-    setHistory(data);
+      setHistory(data);
     } catch (e) {
       console.log("Failed to load history");
     }
@@ -37,7 +37,8 @@ export default function History() {
                   text: "DELETE ALL", 
                   style: "destructive", 
                   onPress: async () => {
-                      await AsyncStorage.removeItem('raceHistory');
+                      // [FIX] Use DataStore to wipe (Nuclear Option)
+                      await DataStore.clearAll();
                       setHistory([]);
                   }
               }
@@ -68,6 +69,12 @@ export default function History() {
   const renderItem = ({ item }: { item: any }) => {
     const style = getLogStyle(item);
 
+    // [FIX] Derive readable time from ISO date string
+    // Prevents "03T21:40..." errors by parsing the Date object
+    const dateObj = new Date(item.date);
+    const timeString = dateObj.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+    const dateString = dateObj.toDateString();
+
     return (
       <TouchableOpacity 
         style={[styles.card, { borderLeftColor: style.color }]}
@@ -83,7 +90,7 @@ export default function History() {
                       date: item.date,
                       totalTime: item.totalTime,
                       sessionType: item.sessionType,
-                      completedAt: item.completedAt
+                      completedAt: timeString // [FIX] Pass derived time
                   } 
                });
           }
@@ -95,7 +102,8 @@ export default function History() {
                   <Ionicons name={style.icon as any} size={12} color={style.color} />
                   <Text style={[styles.typeText, { color: style.color }]}>{style.label}</Text>
               </View>
-              <Text style={styles.timestamp}>{item.completedAt || ''}</Text>
+              {/* [FIX] Display derived time */}
+              <Text style={styles.timestamp}>{timeString}</Text>
           </View>
 
           <View style={styles.mainRow}>
@@ -105,7 +113,8 @@ export default function History() {
               <Text style={styles.totalTime}>{item.totalTime}</Text>
           </View>
           
-          <Text style={styles.cardDate}>{item.date}</Text>
+          {/* [FIX] Display derived date */}
+          <Text style={styles.cardDate}>{dateString}</Text>
         </View>
         
         <Ionicons name="chevron-forward" size={16} color="#444" style={{marginRight: 10}} />
@@ -117,13 +126,12 @@ export default function History() {
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" />
       
-      {/* HEADER WITH CALENDAR BUTTON ADDED */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>OPERATIONS LOG</Text>
         
         <TouchableOpacity 
             style={styles.calBtn} 
-            onPress={() => router.push('/calendar')} // Navigates to app/calendar.tsx
+            onPress={() => router.push('/calendar')} 
         >
             <Ionicons name="calendar" size={16} color="#000" />
             <Text style={styles.calBtnText}>VIEW CALENDAR</Text>
@@ -168,11 +176,9 @@ export default function History() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  // UPDATED HEADER STYLE TO ROW
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
   headerTitle: { color: '#fff', fontSize: 24, fontWeight: '900', letterSpacing: 1, fontStyle: 'italic' },
   
-  // NEW CALENDAR BUTTON STYLE
   calBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFD700', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, gap: 6 },
   calBtnText: { color: '#000', fontSize: 10, fontWeight: '900' },
 

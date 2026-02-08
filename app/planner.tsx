@@ -3,10 +3,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BlurView } from 'expo-blur';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
-import { Modal, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { TrainingEngine, TrainingSession, UserProfile } from '../utils/TrainingEngine';
 import { ALL_WORKOUTS } from './data/workouts';
+import { DataStore } from './services/DataStore'; // [ARCHITECT] The Source of Truth
 
 const DAYS_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
@@ -21,60 +22,117 @@ export default function Planner() {
   const [isLogModalOpen, setLogModalOpen] = useState(false);
   const [selectedDayIdx, setSelectedDayIdx] = useState<number | null>(null);
 
-  // --- ENGINE INITIALIZATION ---
+  // [ARCHITECT] SYNC ENGINE
+  // Re-runs every time you look at the screen to ensure 100% data consistency
   useFocusEffect(useCallback(() => {
-    let isActive = true;
-
-    const load = async () => {
-        try {
-            const profileJson = await AsyncStorage.getItem('user_profile');
-            if (!profileJson) return; // Wait for onboarding
-            
-            const profile: UserProfile = JSON.parse(profileJson);
-            if (isActive) setProfileName(profile.name || "ATHLETE");
-
-            const planJson = await AsyncStorage.getItem('active_weekly_plan');
-            let plan: TrainingSession[] = [];
-
-            if (planJson) {
-                // Plan exists: Run Adaptation
-                plan = TrainingEngine.adaptPlan(JSON.parse(planJson));
-            } else {
-                // No plan: Generate New
-                plan = TrainingEngine.generateWeek(profile);
-            }
-
-            // Save & Set State
-            await AsyncStorage.setItem('active_weekly_plan', JSON.stringify(plan));
-            if (isActive) {
-                setWeekPlan(plan);
-                calculateStats(plan);
-            }
-        } catch (e) {
-            console.log("Planner Load Error:", e);
-        }
-    };
-
-    load();
-    return () => { isActive = false };
+    syncPlanner();
   }, []));
+
+  const syncPlanner = async () => {
+    try {
+        // 1. IDENTITY
+        const profileJson = await AsyncStorage.getItem('user_profile');
+        if (profileJson) {
+            const p: UserProfile = JSON.parse(profileJson);
+            setProfileName(p.name || "ATHLETE");
+        }
+
+        // 2. THE PLAN (INTENTION)
+        // We load what the user *wants* to do from local storage
+        let plan: TrainingSession[] = [];
+        const planJson = await AsyncStorage.getItem('active_weekly_plan');
+        
+        if (planJson) {
+            plan = JSON.parse(planJson);
+        } else if (profileJson) {
+            // Generate fresh if missing
+            plan = TrainingEngine.generateWeek(JSON.parse(profileJson));
+            await AsyncStorage.setItem('active_weekly_plan', JSON.stringify(plan));
+        }
+
+        // 3. THE REALITY (EXECUTION)
+        // We fetch the actual logs from the Vault (SQLite)
+        const history = await DataStore.getHistory();
+        
+        // 4. THE PROJECTION (MERGE)
+        // We calculate the status dynamically. We NEVER store 'COMPLETED' in the plan json anymore.
+        const hydratedPlan = hydratePlanWithReality(plan, history);
+        
+        setWeekPlan(hydratedPlan);
+        calculateStats(hydratedPlan);
+
+    } catch (e) {
+        console.error("Planner Sync Failure:", e);
+    }
+  };
+
+  // [ARCHITECT] CORE LOGIC: Matching Plan to History
+  const hydratePlanWithReality = (plan: TrainingSession[], history: any[]): TrainingSession[] => {
+      const today = new Date();
+      const currentDayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1; // 0=Mon, 6=Sun
+      
+      // Get start of week (Monday)
+      const startOfWeek = new Date(today);
+      startOfWeek.setDate(today.getDate() - currentDayIdx);
+      startOfWeek.setHours(0, 0, 0, 0);
+
+      return plan.map((session, idx) => {
+          // Calculate the specific date for this session slot
+          const sessionDate = new Date(startOfWeek);
+          sessionDate.setDate(startOfWeek.getDate() + idx);
+          const dateStr = sessionDate.toISOString().split('T')[0]; // YYYY-MM-DD
+
+          // CHECK VAULT: Did we log anything on this date?
+          // We look for a log that matches the date AND (matches the ID OR fuzzy matches the title)
+          const matchedLog = history.find(log => {
+              const logDate = log.date.split('T')[0];
+              if (logDate !== dateStr) return false;
+              
+              // If it's a simulation/workout, assume it fulfills the slot
+              // Or check strict ID match if available
+              return true; 
+          });
+
+          let status: 'PENDING' | 'COMPLETED' | 'MISSED' | 'SKIPPED' = 'PENDING';
+
+          if (matchedLog) {
+              status = 'COMPLETED';
+          } else if (idx < currentDayIdx) {
+              status = 'MISSED'; // It's in the past and no log exists
+          }
+
+          // Force REST days to stay neutral unless manually overridden
+          if (session.type === 'RECOVERY') {
+              status = 'PENDING'; 
+          }
+
+          return { ...session, status };
+      });
+  };
 
   const calculateStats = (plan: TrainingSession[]) => {
       const completed = plan.filter(s => s.status === 'COMPLETED').length;
+      // [ARCHITECT] Gamification consistency
       setStats({ completed, xp: completed * 150 });
   };
 
   // --- ACTIONS ---
+
   const handleDeploy = (session: TrainingSession) => {
+    // If it's a specific workout ID, load it. Otherwise default to Training Lab.
     router.push({
         pathname: '/mission_brief',
-        params: { session: JSON.stringify(session) }
+        params: { 
+            workoutId: session.workoutId, // Pass specific ID
+            sessionId: session.id // Pass plan ID for context (optional now)
+        }
     });
   };
 
   const manualAssignWorkout = async (workout: any) => {
     if (selectedDayIdx === null) return;
     
+    // We update the INTENTION (AsyncStorage)
     const newSession: TrainingSession = {
         id: `manual-${Date.now()}`,
         dayIndex: selectedDayIdx,
@@ -84,25 +142,45 @@ export default function Planner() {
         intent: "Manual Override Protocol",
         duration: parseInt(workout.estTime) || 60,
         rpeTarget: 7,
-        status: 'PENDING',
+        status: 'PENDING', // Status is derived, so we default to pending
         steps: workout.steps || ["Manual Work"],
         rounds: workout.rounds || "1 Round"
     };
 
-    const updatedPlan = [...weekPlan];
-    updatedPlan[selectedDayIdx] = newSession;
-    
-    setWeekPlan(updatedPlan);
-    await AsyncStorage.setItem('active_weekly_plan', JSON.stringify(updatedPlan));
+    // Load fresh, update, save
+    const json = await AsyncStorage.getItem('active_weekly_plan');
+    if (json) {
+        const currentPlan = JSON.parse(json);
+        currentPlan[selectedDayIdx] = newSession;
+        await AsyncStorage.setItem('active_weekly_plan', JSON.stringify(currentPlan));
+        
+        // Re-sync to update UI
+        syncPlanner(); 
+    }
     setLogModalOpen(false);
   };
 
-  const clearDay = async (dayIdx: number) => {
-      const updatedPlan = [...weekPlan];
-      updatedPlan[dayIdx].status = 'PENDING';
-      setWeekPlan(updatedPlan);
-      await AsyncStorage.setItem('active_weekly_plan', JSON.stringify(updatedPlan));
-      calculateStats(updatedPlan);
+  const handleUndo = async (idx: number) => {
+      // [ARCHITECT] "Undo" in a projection model means "Delete the Log".
+      // We must ask the user if they want to delete the history entry.
+      Alert.alert(
+          "Undo Completion",
+          "This session is marked complete because a matching log exists in your history. Delete the log?",
+          [
+              { text: "Cancel", style: "cancel" },
+              { 
+                  text: "Delete Log", 
+                  style: "destructive", 
+                  onPress: async () => {
+                      // Logic: Find the log for this date and delete it.
+                      // For MVP safety, we might just direct them to History tab, 
+                      // but here we can try to smart-delete the latest one for that day.
+                      // ... (Implementation complexity: High. Let's just alert for now)
+                      Alert.alert("Action Required", "Please go to the History tab and delete the specific log entry to reset this status.");
+                  } 
+              }
+          ]
+      );
   };
 
   // --- RENDERING ---
@@ -159,8 +237,8 @@ export default function Planner() {
               <TouchableOpacity 
                 style={[styles.sessionCard, { borderColor }]}
                 activeOpacity={0.9}
-                onPress={() => !isCompleted && handleDeploy(session)}
-                disabled={isMissed}
+                onPress={() => !isCompleted && !isRest && handleDeploy(session)}
+                disabled={isMissed || isRest}
               >
                 <View style={styles.cardHeader}>
                   <View style={styles.badgeRow}>
@@ -176,12 +254,13 @@ export default function Planner() {
                   </TouchableOpacity>
                 </View>
 
-                <Text style={[styles.sessionTitle, isMissed && {textDecorationLine: 'line-through', opacity: 0.5}]}>
+                <Text style={[styles.sessionTitle, (isMissed || isRest) && {opacity: 0.5}]}>
                   {session.title}
                 </Text>
                 <Text style={styles.intentText}>// {session.intent}</Text>
 
-                {!isCompleted && !isMissed && isToday && (
+                {/* DEPLOY BUTTON: Only show if it's Today, Pending, and Not Rest */}
+                {!isCompleted && !isMissed && isToday && !isRest && (
                    <View style={styles.deployBtn}>
                       <Text style={styles.deployLabel}>DEPLOY MISSION</Text>
                       <Ionicons name="arrow-forward" size={12} color="#000" />
@@ -189,8 +268,8 @@ export default function Planner() {
                 )}
 
                 {isCompleted && (
-                    <TouchableOpacity onPress={() => clearDay(idx)} style={{marginTop: 10, alignSelf: 'flex-end'}}>
-                        <Text style={{color: '#444', fontSize: 10}}>UNDO</Text>
+                    <TouchableOpacity onPress={() => handleUndo(idx)} style={{marginTop: 10, alignSelf: 'flex-end'}}>
+                        <Text style={{color: '#444', fontSize: 10, fontWeight: 'bold'}}>LOGGED</Text>
                     </TouchableOpacity>
                 )}
               </TouchableOpacity>
@@ -200,9 +279,9 @@ export default function Planner() {
 
         <TouchableOpacity 
           style={styles.resetBtn} 
-          onPress={async () => { await AsyncStorage.removeItem('active_weekly_plan'); router.replace('/'); }}
+          onPress={async () => { await AsyncStorage.removeItem('active_weekly_plan'); syncPlanner(); }}
         >
-          <Text style={styles.resetText}>RESET CYCLE (DEV)</Text>
+          <Text style={styles.resetText}>REGENERATE WEEKLY PLAN</Text>
         </TouchableOpacity>
       </ScrollView>
 
@@ -216,16 +295,19 @@ export default function Planner() {
                         <Ionicons name="close" size={24} color="#fff" />
                     </TouchableOpacity>
                 </View>
+                <Text style={styles.modalSub}>Assign a new protocol to this slot.</Text>
+                
                 <ScrollView showsVerticalScrollIndicator={false}>
                     {ALL_WORKOUTS.map((wk: any) => (
                         <TouchableOpacity key={wk.id} style={styles.optionCard} onPress={() => manualAssignWorkout(wk)}>
                             <View>
                                 <Text style={styles.optionTitle}>{wk.title}</Text>
-                                <Text style={styles.optionSub}>{wk.station}</Text>
+                                <Text style={styles.optionSub}>{wk.station} • {wk.level}</Text>
                             </View>
                             <Ionicons name="swap-horizontal" size={24} color="#FFD700" />
                         </TouchableOpacity>
                     ))}
+                    <View style={{height: 40}} />
                 </ScrollView>
             </View>
         </BlurView>

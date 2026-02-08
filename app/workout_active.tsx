@@ -2,20 +2,24 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import { Keyboard, KeyboardAvoidingView, Platform, ScrollView, StatusBar, StyleSheet, Text, TextInput, TouchableOpacity, Vibration, View } from 'react-native';
+import {
+  AppState,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  Vibration,
+  View
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DataStore } from './services/DataStore';
-
-// --- HYROX STANDARDS MATRIX ---
-const HYROX_WEIGHTS: any = {
-    MEN_OPEN: { SLED_PUSH: '152', SLED_PULL: '103', LUNGE: '20', WALL: '6', FARMER: '24', DEADLIFT: '100' },
-    MEN_PRO: { SLED_PUSH: '202', SLED_PULL: '153', LUNGE: '30', WALL: '9', FARMER: '32', DEADLIFT: '140' },
-    WOMEN_OPEN: { SLED_PUSH: '102', SLED_PULL: '78', LUNGE: '10', WALL: '4', FARMER: '16', DEADLIFT: '70' },
-    WOMEN_PRO: { SLED_PUSH: '152', SLED_PULL: '103', LUNGE: '20', WALL: '6', FARMER: '24', DEADLIFT: '100' },
-    DOUBLES_MEN: { SLED_PUSH: '152', SLED_PULL: '103', LUNGE: '20', WALL: '6', FARMER: '24', DEADLIFT: '100' },
-    DOUBLES_WOMEN: { SLED_PUSH: '102', SLED_PULL: '78', LUNGE: '10', WALL: '4', FARMER: '16', DEADLIFT: '70' },
-    DOUBLES_MIXED: { SLED_PUSH: '152', SLED_PULL: '103', LUNGE: '20', WALL: '6', FARMER: '24', DEADLIFT: '100' }
-};
+// [ARCHITECT] Single Source of Truth
+import { HYROX_STANDARDS, HyroxDivision } from '../constants/HyroxStandards';
 
 interface StepData {
   label: string;
@@ -29,31 +33,45 @@ export default function WorkoutActive() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
+  // PARAMS
   const sessionId = params.sessionId as string; 
   const titleParam = params.title as string;
   const initialStepsRaw: string[] = params.steps ? JSON.parse(params.steps as string) : [];
   const totalRounds = params.rounds ? parseInt(String(params.rounds).match(/\d+/)?.[0] || "1") : 1;
 
   const [sessionTitle, setSessionTitle] = useState("");
-  const [userCategory, setUserCategory] = useState('MEN_OPEN');
+  const [userCategory, setUserCategory] = useState<HyroxDivision>('MEN_OPEN');
   
+  // STATE
   const [activeSteps, setActiveSteps] = useState<StepData[]>([]);
   const [currentRound, setCurrentRound] = useState(1);
   const [currentStepIdx, setCurrentStepIdx] = useState(0);
+  
+  // [ARCHITECT] DELTA TIMER STATE
+  // We track the exact timestamp when the workout/step started
+  const sessionStartTime = useRef<number | null>(null);
+  const stepStartTime = useRef<number | null>(null);
+  
+  // Display state (updated by interval for UI only)
   const [totalSeconds, setTotalSeconds] = useState(0);
   const [stepSeconds, setStepSeconds] = useState(0); 
-  const [isActive, setIsActive] = useState(true);
+  
+  const [isActive, setIsActive] = useState(false); // Start false, wait for init
   const [showSummary, setShowSummary] = useState(false);
   const [finalTonnage, setFinalTonnage] = useState(0);
   
   const scrollViewRef = useRef<ScrollView>(null);
+  const appState = useRef(AppState.currentState);
 
+  // 1. INITIALIZATION
   useEffect(() => {
     const init = async () => {
-        const cat = await AsyncStorage.getItem('userCategory') || 'MEN_OPEN';
+        // [ARCHITECT] Dynamic Division Loading
+        const cat = (await AsyncStorage.getItem('userCategory')) as HyroxDivision || 'MEN_OPEN';
         setUserCategory(cat);
-        const standards = HYROX_WEIGHTS[cat] || HYROX_WEIGHTS.MEN_OPEN;
+        const standards = HYROX_STANDARDS[cat] || HYROX_STANDARDS.MEN_OPEN;
 
+        // Smart Parsing with Centralized Standards
         const steps: StepData[] = initialStepsRaw.map(stepText => {
             const up = stepText.toUpperCase();
             let defaultWeight = '';
@@ -62,32 +80,48 @@ export default function WorkoutActive() {
             if (up.includes('SLED PUSH')) { isHeavy = true; defaultWeight = standards.SLED_PUSH; }
             else if (up.includes('SLED PULL')) { isHeavy = true; defaultWeight = standards.SLED_PULL; }
             else if (up.includes('LUNGE')) { isHeavy = true; defaultWeight = standards.LUNGE; }
-            else if (up.includes('WALL BALL')) { isHeavy = true; defaultWeight = standards.WALL; }
+            else if (up.includes('WALL BALL')) { isHeavy = true; defaultWeight = standards.WALL_BALL; }
             else if (up.includes('FARMER') || up.includes('CARRY')) { isHeavy = true; defaultWeight = standards.FARMER; }
-            else if (up.includes('KETTLEBELL') || up.includes('KB') || up.includes('SWING')) { isHeavy = true; defaultWeight = standards.FARMER; }
+            else if (up.includes('KETTLEBELL') || up.includes('KB') || up.includes('SWING')) { isHeavy = true; defaultWeight = standards.KETTLEBELL; }
             else if (up.includes('DEADLIFT')) { isHeavy = true; defaultWeight = standards.DEADLIFT; }
             else if (up.includes('WEIGHT') || up.includes('HEAVY') || up.includes('BARBELL') || up.includes('DB')) { isHeavy = true; }
 
             return { label: stepText, isLoadBearing: isHeavy, weight: defaultWeight, duration: 0 };
         });
         setActiveSteps(steps);
+        
+        // Start Timers
+        const now = Date.now();
+        sessionStartTime.current = now;
+        stepStartTime.current = now;
+        setIsActive(true);
     };
+    
     init();
     const hour = new Date().getHours();
     setSessionTitle(`${hour < 12 ? 'MORNING' : hour < 18 ? 'AFTERNOON' : 'EVENING'} PROTOCOL`);
   }, []);
 
+  // 2. [ARCHITECT] ROBUST TIMER LOOP
   useEffect(() => {
-    let interval: any;
+    let interval: NodeJS.Timeout;
+
     if (isActive && !showSummary) {
       interval = setInterval(() => {
-        setTotalSeconds(t => t + 1);
-        setStepSeconds(s => s + 1);
-      }, 1000);
+        const now = Date.now();
+        if (sessionStartTime.current) {
+            setTotalSeconds(Math.floor((now - sessionStartTime.current) / 1000));
+        }
+        if (stepStartTime.current) {
+            setStepSeconds(Math.floor((now - stepStartTime.current) / 1000));
+        }
+      }, 200); // 200ms update for smoother feel, but math is absolute
     }
+
     return () => clearInterval(interval);
   }, [isActive, showSummary]);
 
+  // 3. ACTIONS
   const updateStepWeight = (val: string) => {
       const updated = [...activeSteps];
       updated[currentStepIdx].weight = val;
@@ -96,21 +130,36 @@ export default function WorkoutActive() {
 
   const handleNext = () => {
     Vibration.vibrate(50); 
+    
+    // Lock in duration for this step (Current Time - Step Start Time)
+    const now = Date.now();
+    const duration = stepStartTime.current ? Math.floor((now - stepStartTime.current) / 1000) : 0;
+    
     const updated = [...activeSteps];
-    updated[currentStepIdx].duration = stepSeconds;
+    updated[currentStepIdx].duration = duration;
     setActiveSteps(updated);
 
     if (currentStepIdx < activeSteps.length - 1) {
+      // ADVANCE STEP
       setCurrentStepIdx(prev => prev + 1);
-      setStepSeconds(0); 
+      stepStartTime.current = now; // Reset Step Timer
+      setStepSeconds(0);
+      
+      // Smooth Scroll
       scrollViewRef.current?.scrollTo({ y: (currentStepIdx + 1) * 90, animated: true });
     } else {
+      // END OF ROUND
       if (currentRound < totalRounds) {
         setCurrentRound(prev => prev + 1);
         setCurrentStepIdx(0);
+        
+        stepStartTime.current = now;
         setStepSeconds(0);
+        
+        // [UX] Reset durations for new round, but KEEP weights (Smart Memory)
         const nextSteps = activeSteps.map(s => ({ ...s, duration: 0 }));
         setActiveSteps(nextSteps);
+        
         Vibration.vibrate([0, 100, 50, 100]); 
         scrollViewRef.current?.scrollTo({ y: 0, animated: true });
       } else {
@@ -120,6 +169,7 @@ export default function WorkoutActive() {
   };
 
   const finishWorkout = () => {
+    // Calculate Final Tonnage
     let totalLoad = 0;
     activeSteps.forEach(s => {
         const w = parseFloat(s.weight);
@@ -133,6 +183,8 @@ export default function WorkoutActive() {
 
   const saveAndExit = async () => {
     const completionTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    // Construct Splits
     const finalSplits = activeSteps.map(s => ({
         name: s.label,
         time: s.duration, 
@@ -151,16 +203,16 @@ export default function WorkoutActive() {
           splits: finalSplits,
           details: {
               weight: finalTonnage.toString(),
-              // [FIX] MATH ERROR CORRECTION
-              // We set reps to "1" because finalTonnage is ALREADY multiplied by rounds.
-              // This prevents the Database from multiplying (Load * Rounds) * Rounds again.
+              // [ARCHITECT] FIX: Force reps to "1" to prevent double-multiplication in SQL
               reps: "1", 
               note: `Completed ${totalRounds} Rounds via Smart Logbook`
           }
         };
 
+        // Write to Vault
         await DataStore.logEvent(newLog);
         
+        // Update Planner (Legacy Support)
         if (sessionId) {
             const planJson = await AsyncStorage.getItem('active_weekly_plan');
             if (planJson) {
@@ -338,6 +390,7 @@ const styles = StyleSheet.create({
   progressBarFill: { height: '100%', backgroundColor: '#FFD700', borderRadius: 2 },
   
   listContainer: { flex: 1 },
+  // [LAYOUT] Flex-Safe Container
   stepCard: { backgroundColor: '#111', padding: 15, borderRadius: 16, marginBottom: 10, borderWidth: 1, borderColor: '#222', width: '100%' },
   stepCardActive: { backgroundColor: '#1A1A1A', borderColor: '#FFD700', shadowColor: "#FFD700", shadowOffset: {width: 0, height: 0}, shadowOpacity: 0.2, shadowRadius: 10, zIndex: 10 },
   stepCardDone: { opacity: 0.4 },

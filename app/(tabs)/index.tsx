@@ -22,11 +22,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { updateStreak } from '../../utils/gamification';
 import { calculateRoxPace, CATEGORIES, predictFinishTime } from '../../utils/pacing';
+import { TrainingSession } from '../../utils/TrainingEngine';
 import { Region, UPCOMING_RACES } from './../data/races';
-// [CHANGE 1] Import the new SQLite DataStore
 import { DataStore } from './../services/DataStore';
 
 const HEADER_MAX_HEIGHT = 320;
+const DAYS_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
 const STRATEGY_VIDEOS: any = {
   RUNNER: require('../../assets/videos/runner.mp4'),
@@ -66,15 +67,15 @@ export default function Home() {
   const [category, setCategory] = useState('MEN_OPEN');
   const [selectedEventIndex, setSelectedEventIndex] = useState(-1); 
   const [isEventListOpen, setEventListOpen] = useState(false);
-  const [weeklyPlan, setWeeklyPlan] = useState<any[]>([]);
   const [streak, setStreak] = useState(0); 
   const [isLoading, setIsLoading] = useState(true);
+
+  const [hydratedPlan, setHydratedPlan] = useState<TrainingSession[]>([]);
 
   // LOG STATE
   const [showLogModal, setShowLogModal] = useState(false);
   const [logType, setLogType] = useState<'RUN' | 'STATION' | 'WORKOUT'>('RUN');
   
-  // SPECIFIC INPUTS
   const [logMinutes, setLogMinutes] = useState('');
   const [logSeconds, setLogSeconds] = useState('');
   const [logReps, setLogReps] = useState('');
@@ -94,34 +95,90 @@ export default function Home() {
   const titleScale = scrollY.interpolate({ inputRange: [0, SCROLL_DISTANCE], outputRange: [1, 0.60], extrapolate: 'clamp' });
   const titleTranslateY = scrollY.interpolate({ inputRange: [0, SCROLL_DISTANCE], outputRange: [0, -38], extrapolate: 'clamp' });
 
-  useFocusEffect(useCallback(() => { checkProfile(); handleStreak(); }, []));
+  useFocusEffect(useCallback(() => { 
+      checkProfile(); 
+      handleStreak(); 
+      syncHomeWidget(); 
+      checkAnalytics(); // [NEW] Auto-fill 5k time
+  }, []));
+
   const handleStreak = async () => { setStreak(await updateStreak()); };
+
+  // [NEW] SMART FILL LOGIC
+  const checkAnalytics = async () => {
+      try {
+          const stats = await DataStore.getAnalytics();
+          if (stats.records.best5k && stats.records.best5k !== '--:--') {
+              // Only pre-fill if user hasn't typed anything yet
+              setFiveKTime(prev => prev ? prev : stats.records.best5k);
+          }
+      } catch (e) { console.log(e); }
+  };
 
   const checkProfile = async () => {
     try {
-      const profileJson = await AsyncStorage.getItem('user_profile');
-      if (!profileJson) { router.replace('/onboarding'); return; } 
-      const profile = JSON.parse(profileJson);
-      if (profile.name) setCodename(profile.name);
-      if (profile.targetTime) setTargetTime(profile.targetTime);
-      if (profile.athleteType) setAthleteType(profile.athleteType);
-      const savedCat = await AsyncStorage.getItem('userCategory');
-      if (savedCat) setCategory(savedCat);
-      if (profile.targetRace) { const idx = UPCOMING_RACES.findIndex(e => e.id === profile.targetRace.id); if (idx !== -1) setSelectedEventIndex(idx); }
-      loadPlan(); setIsLoading(false);
+      const profile = await DataStore.getUserProfile();
+      if (!profile) { 
+          const legacy = await AsyncStorage.getItem('user_profile');
+          if (!legacy) { router.replace('/onboarding'); return; }
+      } 
+      
+      if (profile) {
+          setCodename(profile.name);
+          setTargetTime(profile.targetTime);
+          setAthleteType(profile.athleteType);
+          setCategory(profile.category);
+      }
+      
+      const legacyJson = await AsyncStorage.getItem('user_profile');
+      if (legacyJson) {
+          const p = JSON.parse(legacyJson);
+          if (p.targetRace) { 
+              const idx = UPCOMING_RACES.findIndex(e => e.id === p.targetRace.id); 
+              if (idx !== -1) setSelectedEventIndex(idx); 
+          }
+      }
+      
+      setIsLoading(false);
     } catch (e) {}
   };
 
-  const loadPlan = async () => { const saved = await AsyncStorage.getItem('user_weekly_plan'); if (saved) setWeeklyPlan(JSON.parse(saved)); };
+  const syncHomeWidget = async () => {
+      try {
+          const planJson = await AsyncStorage.getItem('active_weekly_plan');
+          if (!planJson) return;
+          
+          const rawPlan: TrainingSession[] = JSON.parse(planJson);
+          const history = await DataStore.getHistory();
+          
+          const today = new Date();
+          const currentDayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1;
+          const startOfWeek = new Date(today);
+          startOfWeek.setDate(today.getDate() - currentDayIdx);
+          startOfWeek.setHours(0,0,0,0);
 
-  const toggleDayComplete = async (index: number) => {
-    const newPlan = [...weeklyPlan]; newPlan[index].complete = !newPlan[index].complete;
-    setWeeklyPlan(newPlan); await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(newPlan));
-    if (newPlan[index].complete) handleStreak();
+          const livePlan = rawPlan.map((session, idx) => {
+              const sessionDate = new Date(startOfWeek);
+              sessionDate.setDate(startOfWeek.getDate() + idx);
+              const dateStr = sessionDate.toISOString().split('T')[0];
+
+              const matched = history.find(log => log.date.startsWith(dateStr));
+              
+              let status: TrainingSession['status'] = 'PENDING';
+              
+              if (matched) status = 'COMPLETED';
+              else if (idx < currentDayIdx) status = 'MISSED';
+              if (session.type === 'RECOVERY') status = 'PENDING';
+
+              return { ...session, status };
+          });
+          
+          setHydratedPlan(livePlan);
+      } catch (e) { console.log(e); }
   };
 
-  const completedCount = weeklyPlan.filter(d => d.complete).length;
-  const progress = weeklyPlan.length > 0 ? completedCount / weeklyPlan.length : 0;
+  const completedCount = hydratedPlan.filter(d => d.status === 'COMPLETED').length;
+  const progress = hydratedPlan.length > 0 ? completedCount / hydratedPlan.length : 0;
 
   const player = useVideoPlayer(STRATEGY_VIDEOS.BALANCED, (p) => { p.loop = true; p.muted = true; p.play(); });
   useEffect(() => { async function updateVideo() { try { await player.replaceAsync(STRATEGY_VIDEOS[athleteType]); player.play(); } catch (e) {} } updateVideo(); }, [athleteType]);
@@ -144,7 +201,6 @@ export default function Home() {
       setShowLogModal(true);
   };
 
-  // [CHANGE 2] Updated Save Function to use SQLite DataStore
   const saveQuickLog = async () => {
       let finalTime = '';
       if (logMinutes || logSeconds) {
@@ -163,8 +219,8 @@ export default function Home() {
       try {
           const newHistoryLog = { 
               id: `quick-${Date.now()}`, 
-              date: new Date().toISOString(), // Use ISO for sorting in DB
-              timestamp: Date.now(),          // Required for DataStore sort
+              date: new Date().toISOString(),
+              timestamp: Date.now(),
               completedAt: completedAt,
               totalTime: finalTime || '--:--', 
               type: logType, 
@@ -180,30 +236,9 @@ export default function Home() {
               }
           };
 
-          // WRITE TO SQLITE DATABASE
           await DataStore.logEvent(newHistoryLog);
-          
-          // (Legacy Weekly Plan Logic - Preserved)
-          const planJson = await AsyncStorage.getItem('user_weekly_plan');
-          if (planJson) {
-              const plan = JSON.parse(planJson);
-              const todayIndex = new Date().getDay() === 0 ? 6 : new Date().getDay() - 1;
-              if (plan[todayIndex]) {
-                  if (!plan[todayIndex].workouts) plan[todayIndex].workouts = [];
-                  plan[todayIndex].workouts.push({
-                      id: newHistoryLog.id,
-                      title: logTitle.toUpperCase(),
-                      sessionType: 'QUICK LOG',
-                      timestamp: completedAt,
-                      complete: true,
-                      xp: 150
-                  });
-                  plan[todayIndex].complete = true;
-                  setWeeklyPlan(plan);
-                  await AsyncStorage.setItem('user_weekly_plan', JSON.stringify(plan));
-                  handleStreak();
-              }
-          }
+          await syncHomeWidget(); 
+          await handleStreak();
           
           setShowLogModal(false);
           Alert.alert("LOG SECURED", "Mission data recorded successfully.");
@@ -225,12 +260,9 @@ export default function Home() {
             <Animated.View style={{ opacity: headerContentOpacity, marginBottom: 15 }}>
                 <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start'}}>
                     <View style={styles.streakBadge}><Ionicons name="flame" size={14} color={colors.primary} /><Text style={styles.streakText}>{streak} DAY STREAK</Text></View>
-                    
-                    {/* RESTORED LINK TO PROGRESS */}
-                    <TouchableOpacity onPress={() => router.push('/progress')} style={styles.profileBtn}>
+                    <TouchableOpacity onPress={() => router.push('/(tabs)/profile')} style={styles.profileBtn}>
                         <Ionicons name="person-circle-outline" size={32} color="#fff" />
                     </TouchableOpacity>
-
                 </View>
             </Animated.View>
             <Animated.View style={{ transform: [{ scale: titleScale }, { translateY: titleTranslateY }], alignItems: 'center', width: '100%', zIndex: 999 }}>
@@ -242,12 +274,12 @@ export default function Home() {
 
       <Animated.ScrollView style={[styles.content, { backgroundColor: colors.background }]} contentContainerStyle={{ paddingTop: HEADER_MAX_HEIGHT + 20, paddingBottom: 120 }} showsVerticalScrollIndicator={false} scrollEventThrottle={16} onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: false })}>
         
-        {/* WIDGETS AND BUTTONS */}
+        {/* WEEKLY PLAN WIDGET */}
         <TouchableOpacity style={[styles.widgetBase, { backgroundColor: colors.card, borderColor: colors.border }]} activeOpacity={0.9} onPress={() => router.push('/planner')}>
             <View style={styles.plannerHeader}>
                 <View>
                     <Text style={[styles.plannerTitle, { color: colors.primary }]}>YOUR TRAINING WEEK</Text>
-                    <Text style={[styles.plannerSub, { color: colors.subtext }]}>{completedCount} of {weeklyPlan.length} sessions done</Text>
+                    <Text style={[styles.plannerSub, { color: colors.subtext }]}>{completedCount} of {hydratedPlan.length} sessions done</Text>
                 </View>
                 <Text style={[styles.plannerLink, { color: colors.subtext }]}>VIEW SCHEDULE →</Text>
             </View>
@@ -255,15 +287,18 @@ export default function Home() {
                 <View style={[styles.progressBarFill, { width: `${progress * 100}%`, backgroundColor: colors.primary }]} />
             </View>
             <View style={styles.daysGrid}>
-                {weeklyPlan.map((day, i) => (
-                    <TouchableOpacity key={i} style={styles.dayCol} onPress={() => toggleDayComplete(i)} activeOpacity={0.7}>
-                        <View style={[styles.dayDot, day.complete && { backgroundColor: colors.primary }, { borderWidth: 1, borderColor: day.complete ? colors.primary : colors.border }]} />
-                        <Text style={[styles.dayLabel, { color: day.complete ? colors.text : colors.subtext }]}>{day.day.charAt(0)}</Text>
-                    </TouchableOpacity>
+                {hydratedPlan.map((day, i) => (
+                    <View key={i} style={styles.dayCol}>
+                        <View style={[styles.dayDot, day.status === 'COMPLETED' && { backgroundColor: colors.primary }, { borderWidth: 1, borderColor: day.status === 'COMPLETED' ? colors.primary : colors.border }]} />
+                        <Text style={[styles.dayLabel, { color: day.status === 'COMPLETED' ? colors.text : colors.subtext }]}>
+                            {DAYS_LABELS[day.dayIndex % 7]}
+                        </Text>
+                    </View>
                 ))}
             </View>
         </TouchableOpacity>
 
+        {/* FIELD OPS */}
         <View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.text }]}>FIELD OPERATIONS</Text><Ionicons name="grid-outline" size={14} color={colors.subtext} /></View>
         <TouchableOpacity style={[styles.labPortal, { backgroundColor: colors.primary }]} onPress={() => router.push('/templates')}>
             <View style={{flexDirection: 'row', alignItems: 'center', gap: 15}}>
@@ -276,6 +311,7 @@ export default function Home() {
             <Ionicons name="chevron-forward" size={20} color="#000" />
         </TouchableOpacity>
         
+        {/* QUICK LOG GRID */}
         <View style={styles.quickLogGrid}>
             <TouchableOpacity style={[styles.logBtn, { backgroundColor: colors.card, borderColor: colors.border }]} onPress={() => openQuickLog('RUN')}>
                 <Ionicons name="stopwatch-outline" size={24} color={colors.success} />
@@ -291,6 +327,19 @@ export default function Home() {
             </TouchableOpacity>
         </View>
 
+        {/* [NEW] BENCHMARK BUTTON */}
+        <View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.text }]}>ASSESSMENTS</Text><Ionicons name="ribbon-outline" size={14} color={colors.subtext} /></View>
+        <TouchableOpacity style={[styles.benchmarkCard, { backgroundColor: colors.card, borderColor: colors.primary }]} activeOpacity={0.9} onPress={() => router.push('/benchmarks')}>
+            <View style={{flex: 1}}>
+                <Text style={[styles.benchTitle, { color: colors.text }]}>ESTABLISH BASELINES</Text>
+                <Text style={[styles.benchSub, { color: colors.subtext }]}>Take the PFT or 5K Time Trial</Text>
+            </View>
+            <View style={[styles.goIcon, { backgroundColor: colors.primary }]}>
+                <Ionicons name="arrow-forward" size={20} color="#000" />
+            </View>
+        </TouchableOpacity>
+
+        {/* NEXT EVENT */}
         <View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.text }]}>NEXT EVENT</Text><Ionicons name="calendar-outline" size={14} color={colors.subtext} /></View>
         <TouchableOpacity style={[styles.widgetBase, { backgroundColor: colors.card, borderColor: colors.border }]} activeOpacity={0.9} onPress={() => setEventListOpen(true)}>
             {currentEvent ? (
@@ -317,6 +366,7 @@ export default function Home() {
             )}
         </TouchableOpacity>
 
+        {/* RACE CALCULATOR */}
         <View style={styles.sectionHeader}><Text style={[styles.sectionTitle, { color: colors.text }]}>RACE CALCULATOR</Text><Ionicons name="calculator-outline" size={14} color={colors.subtext} /></View>
         <View style={[styles.consoleContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={[styles.toggleRow, { borderBottomColor: colors.border }]}>
@@ -412,7 +462,7 @@ export default function Home() {
         </BlurView>
       </Modal>
 
-      {/* COMPLEX MANUAL LOG MODAL */}
+      {/* MANUAL LOG MODAL */}
       <Modal visible={showLogModal} animationType="slide" transparent>
         <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
         <BlurView intensity={isDark ? 90 : 50} tint={isDark ? "dark" : "light"} style={styles.modalContainer}>
@@ -426,7 +476,6 @@ export default function Home() {
                 </View>
                 <ScrollView showsVerticalScrollIndicator={false}>
                     
-                    {/* CATEGORY SELECTOR */}
                     <Text style={[styles.inputLabel, { color: colors.subtext }]}>{logType === 'RUN' ? 'RUN TYPE' : (logType === 'STATION' ? 'STATION' : 'FOCUS')}</Text>
                     <View style={{marginBottom: 20}}>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap: 8}}>
@@ -438,9 +487,6 @@ export default function Home() {
                         </ScrollView>
                     </View>
                     
-                    {/* --- DYNAMIC FIELDS --- */}
-                    
-                    {/* RUN INPUTS */}
                     {logType === 'RUN' && (
                         <View style={{flexDirection: 'row', gap: 15, marginBottom: 15}}>
                             <View style={{flex: 1}}>
@@ -457,7 +503,6 @@ export default function Home() {
                         </View>
                     )}
 
-                    {/* STATION INPUTS */}
                     {logType === 'STATION' && (
                         <View>
                             <View style={{flexDirection: 'row', gap: 15, marginBottom: 15}}>
@@ -478,7 +523,6 @@ export default function Home() {
                         </View>
                     )}
 
-                    {/* GYM INPUTS */}
                     {logType === 'WORKOUT' && (
                         <View style={{marginBottom: 15}}>
                             <Text style={[styles.inputLabel, { color: colors.subtext }]}>SESSION DURATION (min)</Text>
@@ -489,7 +533,6 @@ export default function Home() {
                         </View>
                     )}
 
-                    {/* RPE SLIDER */}
                     <Text style={[styles.inputLabel, { color: colors.subtext }]}>RPE (INTENSITY): {logRPE}/10</Text>
                     <View style={{flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20}}>
                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
@@ -523,7 +566,6 @@ const styles = StyleSheet.create({
   subtitle: { color: '#fff', fontSize: 11, fontWeight: 'bold', letterSpacing: 2, textAlign: 'center', marginTop: 10 },
   content: { flex: 1 },
   
-  // WIDGETS
   widgetBase: { marginHorizontal: 20, padding: 20, borderRadius: 25, borderWidth: 1, marginBottom: 5 },
   plannerHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
   plannerTitle: { fontSize: 14, fontWeight: '900' },
@@ -546,7 +588,12 @@ const styles = StyleSheet.create({
   logBtn: { flex: 1, paddingVertical: 15, borderRadius: 16, borderWidth: 1, alignItems: 'center', gap: 8 },
   logBtnText: { fontSize: 10, fontWeight: '900' },
   
-  // MISSION CARD
+  // NEW BENCHMARK BUTTON
+  benchmarkCard: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 20, padding: 20, borderRadius: 25, borderWidth: 1, marginBottom: 5 },
+  benchTitle: { fontSize: 16, fontWeight: '900', fontStyle: 'italic' },
+  benchSub: { fontSize: 11, fontWeight: '500', marginTop: 2 },
+  goIcon: { width: 36, height: 36, borderRadius: 18, justifyContent: 'center', alignItems: 'center' },
+
   missionLeft: { flex: 1 },
   tagBadge: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginBottom: 8 },
   tagText: { fontSize: 9, fontWeight: 'bold' },
@@ -557,7 +604,6 @@ const styles = StyleSheet.create({
   cdNumber: { fontSize: 28, fontWeight: '900' },
   cdLabel: { fontSize: 9, fontWeight: '900' },
 
-  // CALCULATOR
   consoleContainer: { marginHorizontal: 20, borderRadius: 30, borderWidth: 1, overflow: 'hidden', marginBottom: 40 },
   toggleRow: { flexDirection: 'row', borderBottomWidth: 1 },
   toggleBtn: { flex: 1, paddingVertical: 15, alignItems: 'center' },
@@ -579,7 +625,6 @@ const styles = StyleSheet.create({
   btnContent: { alignItems: 'center' },
   actionText: { color: '#fff', fontSize: 20, fontWeight: '900', fontStyle: 'italic' },
 
-  // MODAL
   modalContainer: { flex: 1, justifyContent: 'flex-end' },
   modalContent: { borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25, height: '75%' },
   modalHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },

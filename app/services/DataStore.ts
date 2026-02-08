@@ -124,7 +124,6 @@ export const DataStore = {
           joined_date TEXT
       );
 
-      -- [NEW] SMART MEMORY TABLE
       CREATE TABLE IF NOT EXISTS station_defaults (
           station_id TEXT PRIMARY KEY,
           last_weight TEXT,
@@ -174,8 +173,7 @@ export const DataStore = {
       } catch (e) { console.error("Profile Migration Error", e); }
   },
 
-  // --- 4. SMART DEFAULTS (NEW) ---
-  
+  // --- 4. SMART DEFAULTS ---
   async getStationDefault(stationId: string) {
       try {
           const db = await this._getDb();
@@ -239,15 +237,13 @@ export const DataStore = {
           }
       });
 
-      // [NEW] UPDATE SMART DEFAULTS IF RELEVANT
-      // If this was a workout with a known station/title, save the weight
       if (entry.details?.weight && parseFloat(entry.details.weight) > 0) {
-          // Use title or station as key (e.g., "SLED PUSH POWER")
           const key = entry.title ? entry.title.toUpperCase() : 'UNKNOWN';
           await this.saveStationDefault(key, entry.details.weight, entry.details.reps || '0');
       }
 
-      this._refreshAnalytics(); 
+      // [CRITICAL] Refresh immediately so Index can see it
+      await this._refreshAnalytics(); 
       return true;
     } catch (e) {
       console.error("DataStore Write Error", e);
@@ -373,19 +369,29 @@ export const DataStore = {
           stats.totalTonnage = agg.totalTon || 0;
           stats.consistencyScore = Math.min(100, Math.round(((agg.recentLogs || 0) / 4) * 100));
 
-          const pbs = await db.getAllAsync(`
-            SELECT 
-                MIN(CASE WHEN title LIKE '%5K%' OR title LIKE '%RUN TEST%' THEN total_seconds END) as best5k,
-                MIN(CASE WHEN station_name = 'ROXZONE' THEN actual_seconds END) as bestRox
-            FROM splits 
-            JOIN logs ON splits.log_id = logs.id
+          // [FIX] SMART 5K DETECTION
+          // Looks for "5K" in title OR exactly 5.0km distance
+          const best5kResult = await db.getAllAsync(`
+            SELECT MIN(total_seconds) as best FROM logs 
+            WHERE 
+                (title LIKE '%5K%' OR title LIKE '%RUN TEST%' OR title LIKE '%5.0KM%')
+                OR 
+                (distance_km >= 4.9 AND distance_km <= 5.1 AND type = 'RUN')
           `);
-          
-          if (pbs[0]) {
-              stats.records.best5k = this._formatTime(pbs[0].best5k);
-              stats.records.bestRoxzone = pbs[0].bestRox || 0;
+
+          if (best5kResult[0]?.best) {
+              stats.records.best5k = this._formatTime(best5kResult[0].best);
           }
 
+          // Best Roxzone
+          const bestRoxResult = await db.getAllAsync(`
+            SELECT MIN(actual_seconds) as best FROM splits WHERE station_name = 'ROXZONE'
+          `);
+          if (bestRoxResult[0]?.best) {
+              stats.records.bestRoxzone = bestRoxResult[0].best;
+          }
+
+          // Trends Logic
           const fetchTrend = async (metricKey: MetricKey, sqlWhere: string, sqlCol: string, table: 'logs'|'splits' = 'splits') => {
              let query = '';
              if (table === 'splits') {

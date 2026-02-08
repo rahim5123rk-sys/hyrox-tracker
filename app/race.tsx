@@ -6,21 +6,12 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DataStore } from './services/DataStore';
+// [FIX] Import the shared standards
+import { HYROX_STANDARDS, HyroxDivision } from '../constants/HyroxStandards';
 
-// --- CONSTANTS ---
 const RECOVERY_KEY = 'hyrox_race_recovery_state';
 
-// --- WEIGHTS DATABASE (UNCHANGED) ---
-const WEIGHTS_DB: any = {
-  MEN_OPEN: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
-  MEN_PRO: { sledPush: '202kg', sledPull: '153kg', lunge: '30kg', wallBall: '9kg' },
-  WOMEN_OPEN: { sledPush: '102kg', sledPull: '78kg', lunge: '10kg', wallBall: '4kg' },
-  WOMEN_PRO: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
-  DOUBLES_MEN: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' },
-  DOUBLES_WOMEN: { sledPush: '102kg', sledPull: '78kg', lunge: '10kg', wallBall: '4kg' },
-  DOUBLES_MIXED: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' }, 
-  RELAY: { sledPush: '152kg', sledPull: '103kg', lunge: '20kg', wallBall: '6kg' }
-};
+// [REMOVED] const WEIGHTS_DB = { ... } <-- Deleted this hardcoded block
 
 const BASE_STATIONS = [
   { name: '1km RUN', type: 'run', weight: 1.0, key: 'run', icon: 'walk-outline' },
@@ -47,7 +38,6 @@ export default function Race() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
   
-  // PARAMS (May be overridden by recovery)
   const [goalMinutes, setGoalMinutes] = useState(parseFloat(params.goalMinutes as string) || 90);
   const [bias, setBias] = useState((params.bias as string) || 'BALANCED');
   const [smartPace, setSmartPace] = useState(params.smartPace ? parseFloat(params.smartPace as string) : null);
@@ -56,12 +46,10 @@ export default function Race() {
   const [stations, setStations] = useState(BASE_STATIONS); 
   const [index, setIndex] = useState(0);
   
-  // TIMER STATE
   const [seconds, setSeconds] = useState(0);      
   const [totalTime, setTotalTime] = useState(0);  
   const [isActive, setIsActive] = useState(false);
   
-  // REFS (For Date-Math accuracy)
   const stationStartRef = useRef<number | null>(null);
   const raceStartRef = useRef<number | null>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -70,7 +58,6 @@ export default function Race() {
   const [history, setHistory] = useState<any[]>([]);
   const [displayCategory, setDisplayCategory] = useState('');
 
-  // 1. INIT & RECOVERY CHECK
   useEffect(() => {
     checkRecovery();
   }, []);
@@ -83,7 +70,6 @@ export default function Race() {
               const now = Date.now();
               const diff = now - state.savedAt;
 
-              // Only recover if saved less than 3 hours ago
               if (diff < 3 * 60 * 60 * 1000) {
                   Alert.alert(
                       "CRASH RECOVERED",
@@ -93,12 +79,11 @@ export default function Race() {
                           { text: "Resume", onPress: () => resumeState(state) }
                       ]
                   );
-                  return; // Don't load default config yet
+                  return; 
               } else {
-                  clearRecovery(); // Too old, trash it
+                  clearRecovery(); 
               }
           }
-          // Normal Load
           loadConfig(category);
       } catch (e) { loadConfig(category); }
   };
@@ -111,14 +96,11 @@ export default function Race() {
       setHistory(state.history);
       setIndex(state.index);
       
-      // RESTORE TIMERS (The Magic)
       raceStartRef.current = state.raceStartRef;
       stationStartRef.current = state.stationStartRef;
       
-      // Calculate elapsed time since the crash
-      // We assume the race KEPT GOING in real world time
       setIsActive(true);
-      loadConfig(state.category); // Reload stations/weights
+      loadConfig(state.category);
   };
 
   const clearRecovery = async () => {
@@ -126,7 +108,7 @@ export default function Race() {
   };
 
   const saveRecoveryState = async (newHistory: any[], newIndex: number) => {
-      if (!isActive && newIndex === 0) return; // Don't save if not started
+      if (!isActive && newIndex === 0) return;
       
       const state = {
           savedAt: Date.now(),
@@ -134,26 +116,31 @@ export default function Race() {
           history: newHistory,
           index: newIndex,
           raceStartRef: raceStartRef.current,
-          stationStartRef: stationStartRef.current || Date.now() // Save the start time of current station
+          stationStartRef: stationStartRef.current || Date.now()
       };
       await AsyncStorage.setItem(RECOVERY_KEY, JSON.stringify(state));
   };
 
   const loadConfig = async (cat: string) => {
       let selectedCat = cat;
+      // [FIX] Use HyroxDivision type
       if (!selectedCat) selectedCat = await AsyncStorage.getItem('userCategory') || 'MEN_OPEN';
       
       setDisplayCategory(selectedCat.replace('_', ' '));
-      const weights = WEIGHTS_DB[selectedCat] || WEIGHTS_DB.MEN_OPEN;
+      
+      // [FIX] Use Shared Standards
+      const weights = HYROX_STANDARDS[selectedCat as HyroxDivision] || HYROX_STANDARDS.MEN_OPEN;
 
       let updated = BASE_STATIONS.map(s => {
-        if (s.key === 'sledPush') return { ...s, details: `${weights.sledPush} (4 x 12.5m)` };
-        if (s.key === 'sledPull') return { ...s, details: `${weights.sledPull} (4 x 12.5m)` };
-        if (s.key === 'lunge') return { ...s, details: `${weights.lunge} Sandbag (100m)` };
-        if (s.key === 'wallBall') return { ...s, details: `${weights.wallBall} (100 Reps)` };
+        // [FIX] Updated key access to match the constant file (e.g. SLED_PUSH, WALL_BALL)
+        if (s.key === 'sledPush') return { ...s, details: `${weights.SLED_PUSH}kg (4 x 12.5m)` };
+        if (s.key === 'sledPull') return { ...s, details: `${weights.SLED_PULL}kg (4 x 12.5m)` };
+        if (s.key === 'lunge') return { ...s, details: `${weights.LUNGE}kg Sandbag (100m)` };
+        if (s.key === 'wallBall') return { ...s, details: `${weights.WALL_BALL}kg (100 Reps)` };
         if (s.key === 'farmers') {
-             const farmWeight = selectedCat.includes('PRO') ? '32kg' : '24kg';
-             return { ...s, details: `2 x ${farmWeight} KBs (200m)` };
+             // [FIX] Use KETTLEBELL weight from standards
+             const farmWeight = weights.KETTLEBELL;
+             return { ...s, details: `2 x ${farmWeight}kg KBs (200m)` };
         }
         return s;
       });
@@ -177,20 +164,18 @@ export default function Race() {
 
   const targetSeconds = getTargetSeconds();
 
-  // 2. TICKER (DATE MATH - Prevents Drift)
   useEffect(() => {
     if (isActive) {
       if (!stationStartRef.current) stationStartRef.current = Date.now();
       if (!raceStartRef.current) raceStartRef.current = Date.now();
 
-      // IMMEDIATE SAVE ON START
       if (index === 0 && seconds === 0) saveRecoveryState(history, index);
 
       intervalRef.current = setInterval(() => {
         const now = Date.now();
         setSeconds(Math.floor((now - (stationStartRef.current || now)) / 1000));
         setTotalTime(Math.floor((now - (raceStartRef.current || now)) / 1000));
-      }, 500); // 500ms check is enough for UI, reduces CPU load
+      }, 500);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
@@ -217,7 +202,7 @@ export default function Race() {
       raceStartRef.current = Date.now();
       setIsActive(true);
       speakText("Race Started. Stick to the plan.");
-      saveRecoveryState([], 0); // Init Save
+      saveRecoveryState([], 0); 
     } else {
       const actualTime = seconds;
       const newHistory = [...history, { name: currentStation.name, actual: actualTime, target: targetSeconds }];
@@ -227,38 +212,31 @@ export default function Race() {
         setIsActive(false);
         speakText("Race Finished. Well done.");
         
-        // Log to DataStore (New Schema)
         const raceResult = { 
           date: new Date().toISOString(), 
           totalTime: formatTime(totalTime),
           totalSeconds: totalTime, 
-          splits: newHistory, // Compatible with new DataStore
+          splits: newHistory,
           type: 'SIMULATION', 
           title: `HYROX SIM (${displayCategory})`,
           name: `HYROX SIM (${displayCategory})`
         };
         await DataStore.logEvent(raceResult);
-        
-        // CLEAR RECOVERY ON FINISH
         await clearRecovery();
 
         router.replace({ pathname: "/results", params: { data: JSON.stringify(newHistory), totalTime: formatTime(totalTime) } });
         return;
       }
 
-      // Check Pace
       const diff = targetSeconds - actualTime; 
       if (diff > 15) speakText(`Banked ${diff} seconds.`);
       else if (diff < -15) speakText(`Behind by ${Math.abs(diff)} seconds.`);
       else speakText(`On Pace.`);
 
-      // Advance
       const nextIndex = index + 1;
       setIndex(nextIndex);
       setSeconds(0); 
       stationStartRef.current = Date.now(); 
-      
-      // CRITICAL: SAVE STATE
       saveRecoveryState(newHistory, nextIndex);
     }
   };
@@ -276,7 +254,6 @@ export default function Race() {
     saveRecoveryState(revertedHistory, prevIndex);
   };
 
-  // --- LIVE PACER ---
   const getPacerStatus = () => {
       if (!isActive && index === 0) return { text: 'READY TO RACE', color: '#FFD700', bg: 'rgba(255, 215, 0, 0.15)' };
       const totalTargetSoFar = history.reduce((acc, item) => acc + item.target, 0);
@@ -297,7 +274,6 @@ export default function Race() {
     <View style={[styles.container, { backgroundColor: currentStation.type === 'run' ? '#000' : '#111' }]}>
       <StatusBar barStyle="light-content" />
       
-      {/* HEADER */}
       <View style={[styles.header, { paddingTop: insets.top }]}>
         <TouchableOpacity onPress={() => {
             if (isActive) {
@@ -322,7 +298,6 @@ export default function Race() {
         </TouchableOpacity>
       </View>
 
-      {/* PROGRESS */}
       <View style={styles.progressTrack}>
         {stations.map((_, i) => (
             <View key={i} style={[
@@ -332,7 +307,6 @@ export default function Race() {
         ))}
       </View>
 
-      {/* MAIN DISPLAY */}
       <View style={styles.mainContent}>
         <Text style={styles.stationLabel}>STATION {index + 1}/17</Text>
         <Text style={[styles.stationTitle, { color: currentStation.type === 'run' ? '#fff' : '#4dabf7' }]}>
@@ -359,7 +333,6 @@ export default function Race() {
         {smartPace && <Text style={styles.smartModeText}>SMART PACER ACTIVE</Text>}
       </View>
 
-      {/* FOOTER */}
       <View style={[styles.footer, { paddingBottom: insets.bottom + 20 }]}>
           {isActive && index > 0 && (
              <TouchableOpacity style={styles.undoBtn} onPress={handleUndo}>

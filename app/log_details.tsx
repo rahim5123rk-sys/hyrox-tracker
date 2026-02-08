@@ -22,7 +22,6 @@ export default function LogDetails() {
   const [splits, setSplits] = useState<Split[]>([]);
   const [totalTime, setTotalTime] = useState('--:--');
   const [date, setDate] = useState('');
-  const [completedAt, setCompletedAt] = useState('');
   
   const [expandedIndices, setExpandedIndices] = useState<Record<number, boolean>>({});
 
@@ -37,8 +36,21 @@ export default function LogDetails() {
     }
     if (params.totalTime) setTotalTime(params.totalTime as string);
     if (params.date) setDate(params.date as string);
-    if (params.completedAt) setCompletedAt(params.completedAt as string);
-  }, [params.data, params.totalTime, params.date, params.completedAt]);
+  }, [params.data, params.totalTime, params.date]);
+
+  // [FIX] DATE & TIME FORMATTER
+  // Converts "2026-02-03T21:40..." -> "FEB 03, 2026 • 21:40"
+  const formattedDateTime = useMemo(() => {
+      if (!date) return 'Unknown Date';
+      try {
+          const d = new Date(date);
+          const datePart = d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }).toUpperCase();
+          const timePart = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+          return `${datePart} • ${timePart}`;
+      } catch (e) {
+          return date; 
+      }
+  }, [date]);
 
   const validSplits = useMemo(() => splits.filter(s => s.name !== 'FINISH'), [splits]);
 
@@ -48,15 +60,15 @@ export default function LogDetails() {
   };
 
   const formatTime = (seconds: number) => {
+      if (!seconds || isNaN(seconds)) return "0:00";
       const m = Math.floor(seconds / 60);
-      const s = seconds % 60;
+      const s = Math.round(seconds % 60);
       return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
   // --- INTELLIGENCE ENGINE ---
-  const { processedSplits, uniqueExercises, workSets, bestSplit, worstSplit } = useMemo(() => {
-      let best = { name: '', time: Infinity };
-      let worst = { name: '', time: 0 };
+  const { processedSplits, uniqueExercises, workSets, avgSplitTime } = useMemo(() => {
+      let totalWorkTime = 0;
       
       const counts: Record<string, number> = {};
       const uniqueTypes = new Set<string>();
@@ -79,9 +91,7 @@ export default function LogDetails() {
               
               uniqueTypes.add(typeKey);
               workSetCount++;
-              
-              if (split.actual < best.time && split.actual > 0) best = { name: baseName, time: split.actual };
-              if (split.actual > worst.time) worst = { name: baseName, time: split.actual };
+              totalWorkTime += (split.actual || 0);
           }
 
           let setNum = 0;
@@ -123,13 +133,18 @@ export default function LogDetails() {
           };
       });
 
-      return { processedSplits: processed, uniqueExercises: uniqueTypes.size, workSets: workSetCount, bestSplit: best, worstSplit: worst };
+      const avg = workSetCount > 0 ? totalWorkTime / workSetCount : 0;
+
+      return { 
+          processedSplits: processed, 
+          uniqueExercises: uniqueTypes.size, 
+          workSets: workSetCount, 
+          avgSplitTime: avg 
+      };
   }, [validSplits]);
 
-  // --- AUTO EXPAND EFFECT ---
   useEffect(() => {
       if (processedSplits.length > 0) {
-          // Create an object where every index is true
           const allOpen = processedSplits.reduce((acc, _, i) => {
               acc[i] = true;
               return acc;
@@ -161,8 +176,9 @@ export default function LogDetails() {
             <Text style={styles.title}>
                 MISSION <Text style={{color: '#FFD700'}}>DEBRIEF</Text>
             </Text>
+            {/* [FIX] Display Date AND Time */}
             <Text style={styles.date}>
-                {date}{completedAt ? ` • ${completedAt}` : ''}
+                {formattedDateTime}
             </Text>
         </View>
         <View style={{width: 24}} /> 
@@ -185,9 +201,9 @@ export default function LogDetails() {
                 <Text style={[styles.overviewValue, {fontSize: 24}]}>{totalTime}</Text>
             </View>
             <View style={[styles.overviewCard, { borderTopColor: '#FF453A' }]}>
-                <Text style={styles.overviewLabel}>FASTEST SPLIT</Text>
-                <Text style={styles.overviewSub} numberOfLines={1}>{bestSplit.name || '-'}</Text>
-                <Text style={[styles.overviewValue, {fontSize: 22}]}>{formatTime(bestSplit.time)}</Text>
+                <Text style={styles.overviewLabel}>AVG PACE</Text>
+                <Text style={styles.overviewSub}>PER STATION</Text>
+                <Text style={[styles.overviewValue, {fontSize: 22}]}>{formatTime(avgSplitTime)}</Text>
             </View>
         </View>
 
