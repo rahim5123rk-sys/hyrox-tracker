@@ -3,7 +3,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { Alert, FlatList, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DataStore } from '../services/DataStore';
+import { DataStore } from '../../services/DataStore';
 
 export default function History() {
   const router = useRouter();

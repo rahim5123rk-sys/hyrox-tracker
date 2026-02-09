@@ -5,9 +5,9 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { Alert, Modal, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ALL_WORKOUTS } from '../data/workouts';
+import { DataStore } from '../services/DataStore'; // [ARCHITECT] The Source of Truth
 import { TrainingEngine, TrainingSession, UserProfile } from '../utils/TrainingEngine';
-import { ALL_WORKOUTS } from './data/workouts';
-import { DataStore } from './services/DataStore'; // [ARCHITECT] The Source of Truth
 
 const DAYS_LABELS = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 

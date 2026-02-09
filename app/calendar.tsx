@@ -4,7 +4,7 @@ import React, { useCallback, useState } from 'react';
 import { FlatList, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Calendar, LocaleConfig } from 'react-native-calendars';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DataStore, LogEntry } from './services/DataStore';
+import { DataStore, LogEntry } from '../services/DataStore';
 
 // Configure Calendar Locale
 LocaleConfig.locales['en'] = {

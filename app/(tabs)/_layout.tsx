@@ -1,75 +1,86 @@
-import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
 import { Tabs } from 'expo-router';
-import { Platform } from 'react-native';
-import { useTheme } from '../../context/ThemeContext';
+import { SymbolView } from 'expo-symbols'; // If using SF Symbols
+import { StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 export default function TabLayout() {
-  const { colors, isDark } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
+        // 1. LIQUID GLASS STYLE FOR THE MAIN BAR
         tabBarStyle: {
-          backgroundColor: isDark ? '#000' : '#fff',
-          borderTopColor: isDark ? '#222' : '#eee',
-          height: Platform.OS === 'ios' ? 88 : 60,
-          paddingTop: 5,
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 80,
+          backgroundColor: 'transparent', // Crucial: Let the blur show through
+          borderTopWidth: 0,
+          elevation: 0,
         },
-        tabBarActiveTintColor: '#FFD700', // Gold
-        tabBarInactiveTintColor: '#666',
-        tabBarLabelStyle: {
-          fontWeight: '900',
-          fontSize: 10,
-          letterSpacing: 0.5,
-          marginBottom: 5
-        }
+        // 2. The Native Glass Background
+        tabBarBackground: () => (
+          <BlurView
+            intensity={80}
+            tint="systemUltraThinMaterial" // The "Liquid" Preset
+            style={StyleSheet.absoluteFill}
+          />
+        ),
       }}
     >
-      {/* 1. ENGINE */}
-      <Tabs.Screen
-        name="index"
+      <Tabs.Screen 
+        name="index" 
         options={{
-          title: 'ENGINE',
-          tabBarIcon: ({ color }) => <Ionicons name="flash" size={24} color={color} />,
-        }}
+            title: "Home",
+            tabBarIcon: ({color}) => <SymbolView name="house.fill" tintColor={color} />
+        }} 
       />
+      {/* ... other tabs ... */}
 
-      {/* 2. INTEL */}
-      <Tabs.Screen
-        name="discover"
-        options={{
-          title: 'INTEL',
-          tabBarIcon: ({ color }) => <Ionicons name="compass" size={24} color={color} />,
-        }}
-      />
-
-      {/* 3. LOGBOOK */}
-      <Tabs.Screen
-        name="history"
-        options={{
-          title: 'LOGBOOK',
-          tabBarIcon: ({ color }) => <Ionicons name="time" size={24} color={color} />,
-        }}
-      />
-
-      {/* 4. PROFILE */}
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: 'PROFILE',
-          tabBarIcon: ({ color }) => <Ionicons name="person" size={24} color={color} />,
-        }}
-      />
-
-      {/* --- HIDDEN SUB-PAGES --- */}
-      {/* ONLY include files that actually exist inside app/(tabs)/ */}
-      
-      <Tabs.Screen name="guide" options={{ href: null }} />
-
-      {/* REMOVED: calendar, templates, career, progress */}
-      {/* These are in the ROOT app/ folder now, so they don't belong in this Tab config. */}
+      {/* 3. THE NEW API (PR #41239) 
+        This floats *above* the tab bar but acts as part of the chrome.
+      */}
+      <Tabs.BottomAccessory>
+        <View style={[styles.accessoryContainer, { bottom: 90 }]}>
+            {/* Example: A "Now Playing" or "Quick Action" Liquid Pill */}
+            <BlurView intensity={90} tint="systemChromeMaterial" style={styles.liquidPill}>
+                 <View style={styles.pillContent}>
+                    {/* Your Floating Controls Go Here */}
+                 </View>
+            </BlurView>
+        </View>
+      </Tabs.BottomAccessory>
 
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  accessoryContainer: {
+    position: 'absolute',
+    left: 20,
+    right: 20,
+    height: 60,
+    // No z-index needed; NativeTabs handles layering automatically
+  },
+  liquidPill: {
+    flex: 1,
+    borderRadius: 30,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.2,
+    shadowRadius: 15,
+  },
+  pillContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+  }
+});

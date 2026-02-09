@@ -5,8 +5,8 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Alert, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DataStore } from '../services/DataStore'; // [FIX] Import DataStore
 import { CATEGORIES } from '../utils/pacing';
-import { DataStore } from './services/DataStore'; // [FIX] Import DataStore
 
 export default function Settings() {
   const router = useRouter();

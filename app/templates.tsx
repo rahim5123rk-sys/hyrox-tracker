@@ -7,8 +7,8 @@ import { Alert, FlatList, KeyboardAvoidingView, Modal, Platform, ScrollView, Sta
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // IMPORT DATA
-import { EXERCISE_LIBRARY, Exercise } from './data/exercises';
-import { ALL_WORKOUTS } from './data/workouts';
+import { EXERCISE_LIBRARY, Exercise } from '../data/exercises';
+import { ALL_WORKOUTS } from '../data/workouts';
 
 const FILTERS = ["ALL", "CUSTOM", "BENCHMARKS", "HYBRID", "SKI ERG", "SLED PUSH", "SLED PULL", "BURPEES", "ROWING", "FARMERS", "LUNGES", "WALL BALLS"];
 

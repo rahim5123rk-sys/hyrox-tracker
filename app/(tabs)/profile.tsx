@@ -10,9 +10,9 @@ import {
 import { LineChart } from "react-native-chart-kit";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RadarChart } from '../../components/RadarChart';
+import { AnalysisEngine, AnalysisReport } from '../../services/AnalysisEngine';
+import { AnalyticsProfile, DataStore, LogEntry, METRICS, MetricKey } from '../../services/DataStore';
 import { calculateLevel } from '../../utils/gamification';
-import { AnalysisEngine, AnalysisReport } from './../services/AnalysisEngine';
-import { AnalyticsProfile, DataStore, LogEntry, METRICS, MetricKey } from './../services/DataStore';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 

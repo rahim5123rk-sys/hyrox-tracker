@@ -20,11 +20,11 @@ import {
     View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Region, UPCOMING_RACES } from '../../data/races';
+import { DataStore } from '../../services/DataStore';
 import { updateStreak } from '../../utils/gamification';
 import { calculateRoxPace, CATEGORIES, predictFinishTime } from '../../utils/pacing';
 import { TrainingSession } from '../../utils/TrainingEngine';
-import { Region, UPCOMING_RACES } from './../data/races';
-import { DataStore } from './../services/DataStore';
 
 const HEADER_MAX_HEIGHT = 320;
 const DAYS_LABELS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];

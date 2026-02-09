@@ -16,7 +16,7 @@ import {
   View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Region, UPCOMING_RACES } from '../data/races';
+import { Region, UPCOMING_RACES } from '../../data/races';
 
 const REGIONS: (Region | 'ALL')[] = ['ALL', 'UK', 'EUROPE', 'USA', 'APAC', 'LATAM'];
 

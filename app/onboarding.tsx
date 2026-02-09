@@ -20,10 +20,10 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 // IMPORT DATA
-import { RaceEvent, Region, UPCOMING_RACES } from './data/races';
-import { ALL_WORKOUTS } from './data/workouts';
+import { RaceEvent, Region, UPCOMING_RACES } from '../data/races';
+import { ALL_WORKOUTS } from '../data/workouts';
 // [NEW] Import DataStore for Unified Persistence
-import { DataStore } from './services/DataStore';
+import { DataStore } from '../services/DataStore';
 
 const { width } = Dimensions.get('window');
 

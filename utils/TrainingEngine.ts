@@ -1,5 +1,5 @@
-import { RaceEvent } from '@/app/data/races';
-import { ALL_WORKOUTS } from '@/app/data/workouts';
+import { RaceEvent } from '@/data/races';
+import { ALL_WORKOUTS } from '@/data/workouts';
 
 // --- TYPES ---
 export type SkillLevel = 'ROOKIE' | 'INTERMEDIATE' | 'ELITE';

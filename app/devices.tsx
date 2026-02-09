@@ -1,46 +1,39 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    PermissionsAndroid, Platform, ScrollView, StatusBar,
-    StyleSheet, Text, TouchableOpacity, View
+  ActivityIndicator,
+  Alert,
+  ScrollView, StatusBar,
+  StyleSheet, Text, TouchableOpacity, View
 } from 'react-native';
-import { BleManager, Device } from 'react-native-ble-plx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-// Singleton Manager
-const manager = new BleManager();
-
-const HEART_RATE_SERVICE_UUID = '180D';
+// [EXPO GO MODE] 
+// Native Bluetooth is disabled. We use these mock interfaces to keep TypeScript happy.
+interface MockDevice {
+    id: string;
+    name: string;
+}
 
 export default function Devices() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
+  const insets = useSafeAreaInsets(); // Fixed: Uncommented this
 
   const [isScanning, setIsScanning] = useState(false);
-  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
-  const [devices, setDevices] = useState<Device[]>([]);
+  const [connectedDevice, setConnectedDevice] = useState<MockDevice | null>(null);
+  const [devices, setDevices] = useState<MockDevice[]>([]);
   const [heartRate, setHeartRate] = useState(0);
+  
+  // Timer ref for the fake heart rate data
+  const hrInterval = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    requestPermissions();
-    // Clean up scan on unmount
+    // Clean up on unmount
     return () => {
-      manager.stopDeviceScan();
+        if (hrInterval.current) clearInterval(hrInterval.current);
     };
   }, []);
-
-  const requestPermissions = async () => {
-    if (Platform.OS === 'android') {
-      await PermissionsAndroid.requestMultiple([
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      ]);
-    }
-  };
 
   const startScan = () => {
     if (isScanning) return;
@@ -48,64 +41,44 @@ export default function Devices() {
     setDevices([]);
     setIsScanning(true);
 
-    manager.startDeviceScan(null, null, (error, device) => {
-      if (error) {
-        setIsScanning(false);
-        console.log(error);
-        return;
-      }
-
-      if (device && device.name) {
-        setDevices((prev) => {
-          if (!prev.find(d => d.id === device.id)) {
-            return [...prev, device];
-          }
-          return prev;
-        });
-      }
-    });
-
+    // [SIMULATION] Fake scanning process
     setTimeout(() => {
-      manager.stopDeviceScan();
-      setIsScanning(false);
-    }, 10000);
+        setDevices([
+            { id: 'DEMO-001', name: 'Polar H10 (Demo)' },
+            { id: 'DEMO-002', name: 'Garmin HRM (Demo)' },
+            { id: 'DEMO-003', name: 'Whoop 4.0 (Demo)' }
+        ]);
+        setIsScanning(false);
+    }, 2000); // Finds devices after 2 seconds
   };
 
-  const connectToDevice = async (device: Device) => {
-    manager.stopDeviceScan();
+  const connectToDevice = (device: MockDevice) => {
     setIsScanning(false);
     
-    try {
-      const connected = await device.connect();
-      setConnectedDevice(connected);
-      await connected.discoverAllServicesAndCharacteristics();
-      Alert.alert("CONNECTED", `Paired with ${device.name}`);
-      monitorHeartRate(connected);
-    } catch (e) {
-      Alert.alert("CONNECTION FAILED", "Could not pair with device.");
-    }
+    // [SIMULATION] Fake connection delay
+    Alert.alert("CONNECTING...", `Pairing with ${device.name}`);
+    
+    setTimeout(() => {
+        setConnectedDevice(device);
+        Alert.alert("CONNECTED", `Paired with ${device.name}`);
+        startDemoHeartRate();
+    }, 1500);
   };
 
-  const disconnect = async () => {
+  const disconnect = () => {
     if (connectedDevice) {
-      await connectedDevice.cancelConnection();
       setConnectedDevice(null);
       setHeartRate(0);
+      if (hrInterval.current) clearInterval(hrInterval.current);
     }
   };
 
-  const monitorHeartRate = (device: Device) => {
-    device.monitorCharacteristicForService(
-      HEART_RATE_SERVICE_UUID,
-      '2A37', 
-      (error, characteristic) => {
-        if (characteristic?.value) {
-          // Simulated HR Data (Real decoding requires base64 buffer)
-          const raw = Math.floor(Math.random() * (160 - 130) + 130); 
-          setHeartRate(raw);
-        }
-      }
-    );
+  const startDemoHeartRate = () => {
+    // [SIMULATION] Generates a random HR between 130 and 160 every second
+    hrInterval.current = setInterval(() => {
+        const raw = Math.floor(Math.random() * (160 - 130) + 130); 
+        setHeartRate(raw);
+    }, 1000);
   };
 
   return (
@@ -117,13 +90,15 @@ export default function Devices() {
             <Text style={styles.backLink}>← SETTINGS</Text>
         </TouchableOpacity>
         <Text style={styles.title}>DEVICE <Text style={{color: '#FFD700'}}>RADAR</Text></Text>
-        <Text style={styles.subtitle}>PAIR EXTERNAL SENSORS (BLE)</Text>
+        <Text style={styles.subtitle}>PAIR EXTERNAL SENSORS (DEMO MODE)</Text>
       </View>
 
       <View style={[styles.statusCard, connectedDevice ? styles.statusConnected : styles.statusDisconnected]}>
         <View>
             <Text style={styles.statusLabel}>SYSTEM STATUS</Text>
-            <Text style={styles.statusValue}>{connectedDevice ? "ONLINE" : "SEARCHING..."}</Text>
+            <Text style={[styles.statusValue, { color: connectedDevice ? '#fff' : '#666' }]}>
+                {connectedDevice ? "ONLINE" : "SEARCHING..."}
+            </Text>
             {connectedDevice && <Text style={styles.deviceName}>{connectedDevice.name}</Text>}
         </View>
         
@@ -153,8 +128,10 @@ export default function Devices() {
       <ScrollView contentContainerStyle={styles.list}>
         {devices.map((d) => (
             <TouchableOpacity key={d.id} style={styles.deviceRow} onPress={() => connectToDevice(d)}>
-                <View style={styles.signalIcon}><Ionicons name="bluetooth" size={16} color="#FFD700" /></View>
-                <View>
+                <View style={styles.signalIcon}>
+                    <Ionicons name="bluetooth" size={16} color="#FFD700" />
+                </View>
+                <View style={{flex: 1}}>
                     <Text style={styles.rowName}>{d.name || "Unknown Device"}</Text>
                     <Text style={styles.rowId}>{d.id}</Text>
                 </View>
@@ -162,7 +139,7 @@ export default function Devices() {
             </TouchableOpacity>
         ))}
         {devices.length === 0 && !isScanning && (
-            <Text style={styles.emptyText}>No devices found. Ensure Bluetooth is on.</Text>
+            <Text style={styles.emptyText}>Tap 'Initiate Scan' to find demo devices.</Text>
         )}
       </ScrollView>
     </View>
@@ -180,7 +157,7 @@ const styles = StyleSheet.create({
   statusDisconnected: { backgroundColor: '#1E1E1E', borderColor: '#333' },
   statusConnected: { backgroundColor: 'rgba(50, 215, 75, 0.1)', borderColor: '#32D74B' },
   statusLabel: { color: '#666', fontSize: 10, fontWeight: '900', marginBottom: 5 },
-  statusValue: { color: '#fff', fontSize: 24, fontWeight: '900', fontStyle: 'italic' },
+  statusValue: { fontSize: 24, fontWeight: '900', fontStyle: 'italic' },
   deviceName: { color: '#32D74B', fontSize: 12, fontWeight: 'bold', marginTop: 5 },
   hrValue: { color: '#fff', fontSize: 42, fontWeight: '900', fontFamily: 'Courier' },
   hrLabel: { color: '#32D74B', fontSize: 10, fontWeight: '900' },

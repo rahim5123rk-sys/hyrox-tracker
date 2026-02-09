@@ -17,7 +17,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HYROX_STANDARDS, HyroxDivision } from '../constants/HyroxStandards';
-import { DataStore } from './services/DataStore';
+import { DataStore } from '../services/DataStore';
 
 interface StepData {
   label: string;

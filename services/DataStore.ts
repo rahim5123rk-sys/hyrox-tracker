@@ -152,11 +152,11 @@ export const DataStore = {
   },
 
   async _migrateFromLegacy() {
-      // Legacy migration (assumed handled)
+      // Handled internally
   },
 
   async _migrateProfile() {
-      // Profile migration (assumed handled)
+      // Handled internally
   },
 
   // --- 4. SMART DEFAULTS ---
@@ -344,7 +344,7 @@ export const DataStore = {
     } catch (e) { console.error(e); }
   },
 
-  // --- 7. ANALYTICS ENGINE (FIXED AMBIGUITY) ---
+  // --- 7. ANALYTICS ENGINE (SMART FILTERING) ---
   async _refreshAnalytics() {
       try {
           const db = await this._getDb();
@@ -366,7 +366,6 @@ export const DataStore = {
           stats.totalTonnage = agg.totalTon || 0;
           stats.consistencyScore = Math.min(100, Math.round(((agg.recentLogs || 0) / 4) * 100));
 
-          // [FIX] Ambiguous column 'weight_kg' fixed by adding 'splits.' prefix
           const pbs = await db.getAllAsync(`
             SELECT 
                 MIN(CASE WHEN title LIKE '%5K%' OR title LIKE '%RUN TEST%' THEN total_seconds END) as best5k,
@@ -384,38 +383,51 @@ export const DataStore = {
               stats.records.bestSim = this._formatTime(pbs[0].bestSim);
           }
 
-          const fetchTrend = async (metricKey: MetricKey, sqlWhere: string, sqlCol: string, table: 'logs'|'splits' = 'splits') => {
+          // [ARCHITECT] SMART FILTER
+          // Only fetch trends if the weight is RELEVANT to a race context.
+          // This prevents "light practice" sets from corrupting race pace predictions.
+          const fetchTrend = async (metricKey: MetricKey, sqlWhere: string, minWeight: number = 0) => {
              let query = '';
-             if (table === 'splits') {
-                 // [FIX] Explicit table aliasing for safety
-                 query = `SELECT ${sqlCol} as val, logs.timestamp 
-                          FROM splits JOIN logs ON splits.log_id = logs.id 
-                          WHERE ${sqlWhere} 
-                          ORDER BY logs.timestamp DESC LIMIT 10`;
-             } else {
-                 query = `SELECT ${sqlCol} as val, timestamp 
+             let finalWhere = sqlWhere;
+             
+             // If this station relies on weight, ignore "empty sled" runs for trends
+             if (minWeight > 0) {
+                 finalWhere += ` AND splits.weight_kg >= ${minWeight}`;
+             }
+
+             // Always join for timestamp
+             query = `SELECT splits.actual_seconds as val, logs.timestamp 
+                      FROM splits JOIN logs ON splits.log_id = logs.id 
+                      WHERE ${finalWhere} 
+                      ORDER BY logs.timestamp DESC LIMIT 10`;
+
+             // Special case for top-level Log metrics (HR/RPE)
+             if (metricKey === METRICS.HR || metricKey === METRICS.RPE) {
+                 query = `SELECT ${metricKey === METRICS.HR ? 'hr_avg' : 'rpe'} as val, timestamp 
                           FROM logs 
                           WHERE ${sqlWhere} 
                           ORDER BY timestamp DESC LIMIT 10`;
              }
+
              const rows = await db.getAllAsync(query);
              stats.trends[metricKey] = rows.map((r: any) => r.val).reverse();
              if (rows.length > 0) stats.recency[metricKey] = rows[0].timestamp;
           };
 
+          // [THRESHOLDS] Only count if weight is decent
           await Promise.all([
-              fetchTrend(METRICS.HR, "hr_avg > 0", "hr_avg", 'logs'),
-              fetchTrend(METRICS.RPE, "rpe > 0", "rpe", 'logs'),
-              fetchTrend(METRICS.RUN_PACE, "station_name LIKE '%RUN%' OR station_name LIKE '%1KM%'", "actual_seconds", 'splits'),
-              fetchTrend(METRICS.SKI_ERG, "station_name LIKE '%SKI%'", "actual_seconds"),
-              fetchTrend(METRICS.SLED_PUSH, "station_name LIKE '%PUSH%'", "actual_seconds"),
-              fetchTrend(METRICS.SLED_PULL, "station_name LIKE '%PULL%'", "actual_seconds"),
-              fetchTrend(METRICS.BURPEES, "station_name LIKE '%BURPEE%'", "actual_seconds"),
-              fetchTrend(METRICS.ROWING, "station_name LIKE '%ROW%'", "actual_seconds"),
-              fetchTrend(METRICS.FARMERS, "station_name LIKE '%FARM%'", "actual_seconds"),
-              fetchTrend(METRICS.LUNGES, "station_name LIKE '%LUNG%'", "actual_seconds"),
-              fetchTrend(METRICS.WALL_BALLS, "station_name LIKE '%WALL%'", "actual_seconds"),
-              fetchTrend(METRICS.ROXZONE, "station_name LIKE '%ROXZONE%'", "actual_seconds"),
+              fetchTrend(METRICS.HR, "hr_avg > 0"),
+              fetchTrend(METRICS.RPE, "rpe > 0"),
+              fetchTrend(METRICS.RUN_PACE, "station_name LIKE '%RUN%' OR station_name LIKE '%1KM%'"),
+              fetchTrend(METRICS.SKI_ERG, "station_name LIKE '%SKI%'"), // Erg, no weight
+              fetchTrend(METRICS.SLED_PUSH, "station_name LIKE '%PUSH%'", 50), // Ignore < 50kg
+              fetchTrend(METRICS.SLED_PULL, "station_name LIKE '%PULL%'", 50), // Ignore < 50kg
+              fetchTrend(METRICS.BURPEES, "station_name LIKE '%BURPEE%'"),
+              fetchTrend(METRICS.ROWING, "station_name LIKE '%ROW%'"),
+              fetchTrend(METRICS.FARMERS, "station_name LIKE '%FARM%'", 32), // Ignore light carries
+              fetchTrend(METRICS.LUNGES, "station_name LIKE '%LUNG%'", 10), // Ignore empty lunges
+              fetchTrend(METRICS.WALL_BALLS, "station_name LIKE '%WALL%'", 4), // Ignore < 4kg
+              fetchTrend(METRICS.ROXZONE, "station_name LIKE '%ROXZONE%'"),
           ]);
 
           const simLogs = await db.getAllAsync(`SELECT id FROM logs WHERE type = 'SIMULATION' ORDER BY timestamp DESC LIMIT 10`);

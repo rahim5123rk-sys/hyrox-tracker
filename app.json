@@ -9,19 +9,25 @@
       "bundleIdentifier": "com.raheem.hyroxengineer",
       "supportsTablet": true,
       "infoPlist": {
-        "NSHealthShareUsageDescription": "Hyrox Engineer needs your heart rate to optimize your race strategy.",
-        "NSHealthUpdateUsageDescription": "Hyrox Engineer saves your workouts to Apple Health."
+        "ITSAppUsesNonExemptEncryption": false
       }
+    },
+    "android": {
+      "package": "com.raheem.hyroxengineer"
     },
     "plugins": [
       "expo-router",
-      [
-        "expo-health-connect",
-        {
-          "healthPermission": "Sync your fitness data."
-        }
-      ],
-      "expo-sqlite"
-    ]
+      "expo-sqlite",
+      "expo-font",
+      "expo-image",
+      "expo-video",
+      "expo-web-browser"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "d1e49808-352b-4e04-85dc-e27d0337173e"
+      }
+    }
   }
 }

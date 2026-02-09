@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Alert, StatusBar, StyleSheet, Text, TouchableOpacity, Vibration, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { HYROX_STANDARDS, HyroxDivision } from '../constants/HyroxStandards';
-import { DataStore, METRICS, MetricKey } from './services/DataStore';
+import { DataStore, METRICS, MetricKey } from '../services/DataStore';
 
 const RECOVERY_KEY = 'hyrox_race_recovery_state';
 
@@ -140,14 +140,13 @@ export default function Race() {
       setDisplayCategory(selectedCat.replace('_', ' '));
       const weights = HYROX_STANDARDS[selectedCat as HyroxDivision] || HYROX_STANDARDS.MEN_OPEN;
 
-      // [ARCHITECT] FETCH BIOMETRIC DATA
+      // FETCH BIOMETRIC DATA
       let analytics = { trends: {} as any };
       try {
           analytics = await DataStore.getAnalytics();
       } catch (e) { console.log('No analytics available'); }
 
       // 1. CALCULATE FATIGUE MODIFIER
-      // If user has >15% fatigue, increase run progression slope
       const fatigueIndex = (analytics.trends[METRICS.FATIGUE]?.[0] || 0);
       const fatigueMod = Math.max(0, fatigueIndex / 100); 
 
@@ -155,25 +154,11 @@ export default function Race() {
       let updated = BASE_STATIONS.map((s, i) => {
         let newWeight = s.weight;
 
-        // A. Run Fatigue Logic
+        // Run Fatigue Logic
         if (s.type === 'run') {
             // Base progression (1.0 -> 1.18) + Fatigue Penalty
-            // Later runs get heavier if fatigue is high
             const runNumber = Math.floor(i / 2); // 0 to 7
             newWeight += (runNumber * fatigueMod * 0.05); 
-        }
-
-        // B. Station Efficiency Logic
-        if (s.type === 'station' && s.key) {
-            const metricKey = METRIC_MAP[s.key];
-            const history = analytics.trends[metricKey];
-            
-            // If we have history, check if they are historically slow/fast
-            if (history && history.length > 0) {
-                const avgTime = history.reduce((a: number, b: number) => a + b, 0) / history.length;
-                // Heuristic: If avgTime is high relative to others, bump weight
-                // (Simplified logic: We rely on Bias primarily, but this is the hook for V2)
-            }
         }
 
         // Apply Standards text
@@ -187,7 +172,7 @@ export default function Race() {
         return { ...s, weight: newWeight, details };
       });
 
-      // 3. APPLY BIAS (Legacy Override)
+      // 3. APPLY BIAS (Legacy Override - Only if NOT Smart Pace)
       if (!smartPace) {
           if (bias === 'RUNNER') updated = updated.map(s => s.type === 'run' ? { ...s, weight: s.weight * 0.85 } : { ...s, weight: s.weight * 1.15 });
           else if (bias === 'LIFTER') updated = updated.map(s => s.type === 'station' ? { ...s, weight: s.weight * 0.85 } : { ...s, weight: s.weight * 1.15 });
@@ -200,11 +185,22 @@ export default function Race() {
   
   const getTargetSeconds = () => {
       if (!currentStation) return 0;
-      if (smartPace && currentStation.type === 'run') return Math.floor(smartPace);
       
-      // Dynamic Goal Calculation
+      // 1. SMART PACER MODE (Uses Bio-Morphing)
+      if (smartPace && currentStation.type === 'run') {
+          return Math.floor(smartPace * currentStation.weight);
+      }
+      
+      // 2. MANUAL CALCULATOR FIX (Dynamic Roxzone Buffer - The 6% Rule)
+      // We assume transition time scales with fitness level.
+      // Elite (60m) -> 3.6m buffer. Beginner (120m) -> 7.2m buffer.
+      const roxBufferMinutes = goalMinutes * 0.06; 
+      const effectiveGoalMinutes = Math.max(0, goalMinutes - roxBufferMinutes);
+
+      // Distribute the EFFECTIVE time (Pure Work)
       const totalWeight = stations.reduce((acc, item) => acc + item.weight, 0);
-      const secondsPerUnit = (goalMinutes * 60) / totalWeight;
+      const secondsPerUnit = (effectiveGoalMinutes * 60) / totalWeight;
+      
       return Math.floor(secondsPerUnit * currentStation.weight);
   };
 

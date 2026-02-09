@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Image, ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ALL_WORKOUTS } from './data/workouts';
+import { ALL_WORKOUTS } from '../data/workouts';
 
 export default function MissionBrief() {
   const router = useRouter();
